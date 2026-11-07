@@ -1,0 +1,741 @@
+<!doctype html>
+<html lang="ja"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="robots" content="noindex,nofollow,noarchive">
+<title>Ryuka 内装ビューア</title>
+<style>
+
+  :root{
+    --accent:#3a6ea5; --accent-dark:#2f5a87; --ink:#222b32; --sub:#6b7480;
+    --panel-bg:rgba(255,255,255,.94); --line:#e4e7ea; --radius:14px;
+    /* iPhoneのノッチ/Dynamic Island・ホームインジケーターとUIが重ならないための余白。
+       viewport-fit=cover（<meta name="viewport">参照）と組み合わせて初めて実際の値が入る。
+       非対応環境（Android・PC等）では0pxになるので、常にこの変数を使っておけば安全 */
+    --safe-t: env(safe-area-inset-top, 0px);
+    --safe-r: env(safe-area-inset-right, 0px);
+    --safe-b: env(safe-area-inset-bottom, 0px);
+    --safe-l: env(safe-area-inset-left, 0px);
+  }
+  html,body{margin:0;padding:0;overflow:hidden;background:#dfe4e8;font-family:"Hiragino Sans","Noto Sans JP",sans-serif;
+      -webkit-tap-highlight-color:transparent;overscroll-behavior:none;}
+  #canvas-wrap{position:fixed;inset:0;touch-action:none;}
+  * { box-sizing:border-box; }
+
+  /* ---- 左パネル ---- */
+  #ui{position:fixed;top:calc(var(--safe-t) + 64px);left:calc(var(--safe-l) + 12px);background:var(--panel-bg);backdrop-filter:blur(6px);border-radius:var(--radius);
+      padding:16px 18px;box-shadow:0 8px 28px rgba(20,30,40,.16);width:300px;font-size:13px;color:var(--ink);
+      max-height:calc(100vh - var(--safe-t) - var(--safe-b) - 84px);overflow-y:auto;transition:transform .18s ease,opacity .18s ease;}
+  #ui h1{font-size:14.5px;margin:0 0 4px;font-weight:700;letter-spacing:.01em;}
+  #ui .sub{font-size:11.5px;color:var(--sub);margin-bottom:10px;line-height:1.55;}
+  #ui .section-title{font-size:11px;font-weight:700;color:var(--sub);text-transform:uppercase;letter-spacing:.06em;
+      margin:14px 0 6px;}
+  #ui .section-title:first-of-type{margin-top:0;}
+  #ui label{display:flex;align-items:center;gap:8px;margin:6px 0;cursor:pointer;padding:3px 4px;border-radius:7px;
+      transition:background .12s;}
+  #ui label:hover{background:#f2f4f6;}
+  #ui input[type=checkbox]{width:15px;height:15px;accent-color:var(--accent);cursor:pointer;}
+  #ui hr{border:none;border-top:1px solid var(--line);margin:12px 0;}
+  /* 電気設備一覧（モーダル・部屋フォーカスパネル共通）：カテゴリ見出しと個別設備を、色付きの
+     縦線でグルーピングしつつ、見出しは小さく灰色＋自分の件数を明記して「一覧の1項目」に
+     見えないようにする。個別設備は見出しより一段字下げしたクリック可能な行として区別する。
+     #electricalSummaryBodyは#uiの外（モーダル）にあるため、#ui配下限定にせず共通クラスにする */
+  .elecCatGroup{border-left:3px solid #ccc;padding-left:9px;margin:7px 0;}
+  .elecListCat{font-size:10.5px;font-weight:700;color:var(--sub);letter-spacing:.03em;margin-bottom:2px;}
+  .elecListRow{font-size:12px;color:var(--ink);padding:3px 6px;margin:1px 0;border-radius:6px;cursor:pointer;}
+  .elecListRow:hover{background:#f2f4f6;}
+  .elecListDot{display:inline-block;width:9px;height:9px;border-radius:50%;vertical-align:middle;margin-right:6px;}
+  #ui #electricalSummaryOpenBtn{width:100%;background:var(--accent);color:#fff;border:none;border-radius:8px;
+      padding:8px;font-size:11.5px;cursor:pointer;}
+  #ui #electricalSummaryOpenBtn:hover{background:var(--accent-dark);}
+  .legend-item{display:flex;align-items:flex-start;gap:8px;margin:5px 0;font-size:11.5px;line-height:1.5;color:#3d444b;}
+  .swatch{width:13px;height:13px;border-radius:4px;flex-shrink:0;margin-top:2px;border:1px solid rgba(0,0,0,.18);}
+  #ui.hidden{transform:translateX(-8px);opacity:0;pointer-events:none;}
+
+  /* ---- 上部バー ---- */
+  #topBar{position:fixed;top:calc(var(--safe-t) + 12px);left:calc(var(--safe-l) + 12px);right:calc(var(--safe-r) + 12px);z-index:20;display:flex;align-items:center;
+      justify-content:space-between;gap:10px;pointer-events:none;}
+  #topBar > *{pointer-events:auto;}
+  #menuToggle{background:var(--accent);color:#fff;border:none;border-radius:10px;width:40px;height:40px;
+      font-size:16px;cursor:pointer;box-shadow:0 3px 10px rgba(0,0,0,.22);flex-shrink:0;}
+  #menuToggle:hover{background:var(--accent-dark);}
+  #modeSwitch{display:flex;background:rgba(255,255,255,.94);border-radius:11px;padding:3px;box-shadow:0 3px 12px rgba(0,0,0,.18);
+      gap:2px;}
+  #modeSwitch button{border:none;background:transparent;color:#4a5158;font-size:12.5px;font-weight:600;
+      padding:8px 13px;border-radius:8px;cursor:pointer;white-space:nowrap;transition:background .15s,color .15s;}
+  #modeSwitch button.active{background:var(--accent);color:#fff;}
+  #modeSwitch button:not(.active):hover{background:#eef1f4;}
+  #floorToggle{display:flex;background:rgba(255,255,255,.94);border-radius:11px;padding:3px;box-shadow:0 3px 12px rgba(0,0,0,.18);gap:2px;}
+  #floorToggle button{font-size:12.5px;font-weight:600;padding:8px 12px;border:none;border-radius:8px;
+       background:transparent;color:#4a5158;cursor:pointer;transition:background .15s,color .15s;}
+  #floorToggle button.active{background:var(--accent);color:#fff;}
+  #floorToggle button:not(.active):hover{background:#eef1f4;}
+  #floorToggle.disabled{opacity:.4;pointer-events:none;}
+
+  #tip{position:fixed;bottom:calc(var(--safe-b) + 10px);left:calc(var(--safe-l) + 12px);font-size:11px;color:#555;background:rgba(255,255,255,.85);
+       padding:6px 10px;border-radius:6px;max-width:min(94vw,520px);}
+  .labelDiv{position:absolute;color:#222;font-size:11px;background:rgba(255,255,255,.82);
+            padding:1px 5px;border-radius:4px;white-space:nowrap;pointer-events:none;transform:translate(-50%,-50%);
+            border:1px solid rgba(0,0,0,.1);}
+  .labelDiv.approx{color:#8a5a00;border-color:rgba(200,140,0,.4);}
+  .labelDiv.dim{background:rgba(30,32,36,.88);color:#ffe27a;font-size:10px;font-weight:700;
+      padding:1px 4px;border:1px solid rgba(255,255,255,.15);font-family:monospace;}
+
+  /* ---- 内覧（一人称）モード ---- */
+  #walkHud{position:fixed;top:calc(var(--safe-t) + 12px);left:50%;transform:translateX(-50%);z-index:22;display:none;
+      align-items:center;gap:10px;background:rgba(20,26,32,.72);color:#fff;padding:8px 10px 8px 16px;
+      border-radius:12px;box-shadow:0 6px 20px rgba(0,0,0,.28);font-size:12.5px;backdrop-filter:blur(4px);}
+  #walkHud .room{font-weight:600;white-space:nowrap;}
+  #walkHud button{background:rgba(255,255,255,.14);color:#fff;border:none;border-radius:8px;padding:7px 11px;
+      font-size:12px;cursor:pointer;white-space:nowrap;}
+  #walkHud button:hover{background:rgba(255,255,255,.24);}
+  #fovHint{position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);z-index:21;display:none;
+      background:rgba(20,26,32,.66);color:#fff;font-size:13px;padding:6px 14px;border-radius:8px;pointer-events:none;
+      white-space:nowrap;}
+  #crosshair{position:fixed;top:50%;left:50%;width:6px;height:6px;margin:-3px 0 0 -3px;border-radius:50%;
+      background:rgba(255,255,255,.85);box-shadow:0 0 0 1.5px rgba(0,0,0,.35);z-index:21;display:none;pointer-events:none;}
+  #moveHint{position:fixed;bottom:calc(var(--safe-b) + 14px);left:50%;transform:translateX(-50%);z-index:21;display:none;
+      background:rgba(20,26,32,.66);color:#fff;font-size:11.5px;padding:6px 12px;border-radius:8px;pointer-events:none;
+      white-space:nowrap;}
+  #minimap{position:fixed;top:calc(var(--safe-t) + 62px);right:calc(var(--safe-r) + 12px);z-index:20;display:none;width:220px;height:140px;
+      background:rgba(255,255,255,.92);border-radius:10px;box-shadow:0 3px 12px rgba(0,0,0,.22);
+      cursor:pointer;}
+
+  #joyBase{position:fixed;left:calc(var(--safe-l) + 26px);bottom:calc(var(--safe-b) + 26px);width:104px;height:104px;border-radius:50%;
+      background:rgba(255,255,255,.22);border:1.5px solid rgba(255,255,255,.5);z-index:21;display:none;
+      touch-action:none;pointer-events:none;}
+      /* pointer-events:noneが必須：この見た目上の円はcanvasより手前(z-index:21)にあるため、
+         これがないとタッチがこのdiv自身に吸われてしまい、下のcanvasのpointerdownハンドラー
+         （実際の移動処理・withinJoystick()判定を持つ）に一切届かず操作不能になる（2026-08-16） */
+  #joyKnob{position:absolute;left:50%;top:50%;width:44px;height:44px;margin:-22px 0 0 -22px;border-radius:50%;
+      background:rgba(255,255,255,.85);box-shadow:0 2px 8px rgba(0,0,0,.25);}
+
+  /* ---- 家具の配置編集（平面図モード限定） ---- */
+  #editToggle{background:rgba(255,255,255,.94);border:none;border-radius:11px;padding:9px 14px;
+      font-size:12.5px;font-weight:600;color:#4a5158;cursor:pointer;box-shadow:0 3px 12px rgba(0,0,0,.18);
+      display:none;white-space:nowrap;}
+  #editToggle.active{background:var(--accent);color:#fff;}
+  #editHint{position:fixed;top:calc(var(--safe-t) + 60px);left:50%;transform:translateX(-50%);z-index:20;display:none;
+      background:rgba(20,26,32,.7);color:#fff;font-size:11.5px;padding:6px 12px;border-radius:8px;
+      pointer-events:none;white-space:nowrap;max-width:92vw;text-overflow:ellipsis;overflow:hidden;}
+  #furniturePanel{position:fixed;right:calc(var(--safe-r) + 12px);bottom:calc(var(--safe-b) + 12px);z-index:22;display:none;width:240px;
+      background:var(--panel-bg);backdrop-filter:blur(6px);border-radius:var(--radius);
+      padding:14px 16px;box-shadow:0 8px 28px rgba(20,30,40,.2);font-size:12.5px;color:var(--ink);}
+  #furniturePanel .fp-head{display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;
+      font-weight:700;}
+  #furniturePanel .fp-head button{background:none;border:none;color:var(--sub);cursor:pointer;font-size:14px;
+      padding:2px 4px;}
+  .fp-row{margin:8px 0;}
+  .fp-row button{width:100%;background:#f2f4f6;border:1.5px solid var(--line);border-radius:9px;padding:8px;
+      font-size:12px;cursor:pointer;color:var(--ink);}
+  .fp-row button:hover{border-color:var(--accent);}
+  .fp-row button.danger{background:#fdecec;border-color:#e0a3a3;color:#a33a3a;}
+  .fp-row button.danger:hover{border-color:#c94f4f;}
+  .fp-dims{display:flex;gap:6px;}
+  .fp-dims label{flex:1;font-size:10.5px;color:var(--sub);display:flex;flex-direction:column;gap:3px;}
+  .fp-dims input{width:100%;border:1.5px solid var(--line);border-radius:7px;padding:5px 6px;font-size:12px;}
+  #furnitureBar{flex-wrap:wrap;max-width:calc(100vw - 300px);position:fixed;left:calc(var(--safe-l) + 12px);bottom:calc(var(--safe-b) + 12px);z-index:22;display:none;align-items:center;gap:8px;
+      background:var(--panel-bg);backdrop-filter:blur(6px);border-radius:12px;padding:9px 12px;
+      box-shadow:0 8px 24px rgba(20,30,40,.18);font-size:11.5px;color:var(--sub);flex-wrap:wrap;max-width:88vw;}
+  #furnitureBar button{background:var(--accent);color:#fff;border:none;border-radius:8px;padding:8px 12px;
+      font-size:11.5px;cursor:pointer;white-space:nowrap;}
+  #furnitureBar input,#furnitureBar select{border:1px solid var(--line);border-radius:8px;background:#fff;
+      padding:7px 8px;font-size:12px;min-width:0;}
+  #fbAddSearch{width:145px;}
+  #fbAddType{width:220px;max-width:45vw;}
+  #fbDeleted{max-width:220px;}
+  #furnitureBar #fbClearAll{background:#e2e5e8;color:#4a5158;}
+
+  /* ---- 窓・ドアの配置編集（平面図モード限定） ---- */
+  #doorEditToggle{background:rgba(255,255,255,.94);border:none;border-radius:11px;padding:9px 14px;
+      font-size:12.5px;font-weight:600;color:#4a5158;cursor:pointer;box-shadow:0 3px 12px rgba(0,0,0,.18);
+      display:none;white-space:nowrap;}
+  #doorEditToggle.active{background:var(--accent);color:#fff;}
+  #doorEditHint{position:fixed;top:calc(var(--safe-t) + 60px);left:50%;transform:translateX(-50%);z-index:20;display:none;
+      background:rgba(20,26,32,.7);color:#fff;font-size:11.5px;padding:6px 12px;border-radius:8px;
+      pointer-events:none;white-space:nowrap;max-width:92vw;text-overflow:ellipsis;overflow:hidden;}
+  #doorPanel{position:fixed;right:calc(var(--safe-r) + 12px);bottom:calc(var(--safe-b) + 12px);z-index:22;display:none;width:240px;
+      background:var(--panel-bg);backdrop-filter:blur(6px);border-radius:var(--radius);
+      padding:14px 16px;box-shadow:0 8px 28px rgba(20,30,40,.2);font-size:12.5px;color:var(--ink);}
+  #doorPanel .fp-head{display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;
+      font-weight:700;}
+  #doorPanel .fp-head button{background:none;border:none;color:var(--sub);cursor:pointer;font-size:14px;
+      padding:2px 4px;}
+  #doorPanel select{width:100%;border:1.5px solid var(--line);border-radius:7px;padding:6px 8px;
+      font-size:12px;color:var(--ink);background:#fff;}
+  .hand-label{font-size:10.5px;color:var(--sub);margin:8px 0 4px;}
+  .hand-row{display:flex;gap:6px;}
+  .hand-row button{flex:1;background:#f2f4f6;border:1.5px solid var(--line);border-radius:8px;padding:6px;
+      font-size:11.5px;cursor:pointer;color:var(--ink);}
+  .hand-row button.active{background:var(--accent);color:#fff;border-color:var(--accent);}
+  #doorBar{position:fixed;left:calc(var(--safe-l) + 12px);bottom:calc(var(--safe-b) + 12px);z-index:22;display:none;align-items:center;gap:8px;
+      background:var(--panel-bg);backdrop-filter:blur(6px);border-radius:12px;padding:9px 12px;
+      box-shadow:0 8px 24px rgba(20,30,40,.18);font-size:11.5px;color:var(--sub);flex-wrap:wrap;max-width:88vw;}
+  #doorBar button{background:var(--accent);color:#fff;border:none;border-radius:8px;padding:8px 12px;
+      font-size:11.5px;cursor:pointer;white-space:nowrap;}
+  #doorBar #dbClearAll{background:#e2e5e8;color:#4a5158;}
+
+  /* ---- 電気設備の配置編集（俯瞰モード限定。平面図では小さすぎて見えないため） ---- */
+  #electricalEditToggle{background:rgba(255,255,255,.94);border:none;border-radius:11px;padding:9px 14px;
+      font-size:12.5px;font-weight:600;color:#4a5158;cursor:pointer;box-shadow:0 3px 12px rgba(0,0,0,.18);
+      display:none;white-space:nowrap;}
+  #electricalEditToggle.active{background:var(--accent);color:#fff;}
+  /* 俯瞰モード限定の方位コンパス。#topBarの子要素にして電気設備編集ボタンと同じ右端グループに
+     入れる（justify-content:space-betweenのため、mode!=='orbit'のボタンが非表示のときは
+     自動的に間隔が詰まる）。回転はcamThetaのみに依存（camPhi=仰角は無関係）でJS側から
+     #compassDialのtransformを毎フレーム更新する */
+  #compass{display:none;width:38px;height:38px;border-radius:50%;background:rgba(255,255,255,.94);
+      box-shadow:0 3px 12px rgba(0,0,0,.18);position:relative;flex-shrink:0;}
+  #compassDial{position:absolute;inset:0;}
+  #compassDial span{position:absolute;font-size:9px;font-weight:700;color:#6b7580;}
+  #compassDial span.n{top:3px;left:50%;transform:translateX(-50%);color:var(--accent);}
+  #compassDial span.s{bottom:3px;left:50%;transform:translateX(-50%);}
+  #compassDial span.e{right:4px;top:50%;transform:translateY(-50%);}
+  #compassDial span.w{left:4px;top:50%;transform:translateY(-50%);}
+  /* ---- 電気設備編集ドック（右側1本に統合、2026-08-28再構成） ----
+     以前は左メニュー（部屋フォーカス選択・一覧ボタン）・上部ヒント帯・右上（部屋の設備リスト）・
+     右下（選択中の編集パネル）・左下（書き出し/全取消バー）の8箇所に分散しており、実測で
+     右上/右下パネルが114〜207px重なる、ヒント帯や左下バーも別要素と重なる、という不具合が
+     あった（施主指摘）。電気設備編集中だけ表示される1本の縦積みドックへ統合する：
+     ナビ段(#edNav・常時)／リスト段(#edListSection・部屋フォーカス中のみ)／
+     編集段(#edEditSection・設備選択中のみ)／フッター段(#edFooter・常時)。
+     リスト段だけをoverflow-y:autoにし、他の段は常に全体が見えるようにする */
+  #electricalDock{position:fixed;top:calc(var(--safe-t) + 62px);right:calc(var(--safe-r) + 12px);z-index:20;display:none;width:270px;
+      background:var(--panel-bg);backdrop-filter:blur(6px);border-radius:var(--radius);
+      padding:14px 16px;box-shadow:0 8px 28px rgba(20,30,40,.2);font-size:12.5px;color:var(--ink);
+      max-height:calc(100vh - var(--safe-t) - var(--safe-b) - 80px);overflow-y:auto;
+      flex-direction:column;gap:10px;} /* display:flexはJS側で切り替える。overflow-y:autoは
+      各段の高さ配分が画面の狭さで崩れた場合の保険（通常は各段内部のスクロールで収まる） */
+  #electricalDock .fp-head{display:flex;align-items:center;justify-content:space-between;
+      font-weight:700;flex-shrink:0;}
+  #electricalDock .fp-head button{background:none;border:none;color:var(--sub);cursor:pointer;font-size:14px;
+      padding:2px 4px;}
+  #electricalDock select{width:100%;border:1.5px solid var(--line);border-radius:7px;padding:6px 8px;
+      font-size:12px;color:var(--ink);background:#fff;}
+  #electricalDock select#roomFocusSelect:disabled{opacity:.5;cursor:not-allowed;}
+  #edNav{flex-shrink:0;display:flex;flex-direction:column;gap:6px;}
+  .ed-nav-row{display:flex;gap:6px;}
+  .ed-nav-row button{flex:1;background:#f2f4f6;border:1.5px solid var(--line);border-radius:8px;
+      padding:7px;font-size:11px;cursor:pointer;color:var(--ink);}
+  .ed-nav-row button:disabled{opacity:.45;cursor:default;}
+  #edListSection{display:none;flex-direction:column;min-height:110px;flex:1 1 auto;
+      border-top:1px solid var(--line);padding-top:10px;}
+  #edListSection .fp-head{margin-bottom:6px;}
+  #roomFocusElecPanelBody{overflow-y:auto;min-height:0;}
+  #roomFocusElecAddBtn{width:100%;background:var(--accent);color:#fff;border:none;border-radius:8px;
+      padding:8px;font-size:11.5px;cursor:pointer;margin-top:10px;flex-shrink:0;}
+  #roomFocusElecAddBtn:hover{background:var(--accent-dark);}
+  #edEditSection{display:none;flex-direction:column;gap:8px;flex-shrink:0;
+      border-top:1px solid var(--line);padding-top:10px;max-height:40vh;overflow-y:auto;}
+  #edFooter{flex-shrink:0;border-top:1px solid var(--line);padding-top:10px;
+      display:flex;flex-direction:column;gap:6px;font-size:11.5px;color:var(--sub);}
+  #edFooter .ed-footer-row{display:flex;gap:8px;}
+  #edFooter button{flex:1;background:var(--accent);color:#fff;border:none;border-radius:8px;padding:8px 10px;
+      font-size:11.5px;cursor:pointer;white-space:nowrap;}
+  #edFooter #ebClearAll,#edFooter #ebUndo,#edFooter #ebRedo{background:#e2e5e8;color:#4a5158;}
+  #edFooter button:disabled{opacity:.4;cursor:default;}
+
+  #spawnOverlay{position:fixed;inset:0;z-index:30;background:rgba(18,22,26,.55);display:none;
+      align-items:center;justify-content:center;
+      padding:calc(var(--safe-t) + 20px) calc(var(--safe-r) + 20px) calc(var(--safe-b) + 20px) calc(var(--safe-l) + 20px);}
+  #spawnCard{background:#fff;border-radius:18px;padding:26px 26px 22px;max-width:420px;width:100%;
+      box-shadow:0 20px 60px rgba(0,0,0,.35);text-align:center;}
+  #spawnCard h2{margin:0 0 4px;font-size:16.5px;color:var(--ink);}
+  #spawnCard p{margin:0 0 18px;font-size:12.5px;color:var(--sub);line-height:1.6;}
+  .spawnOptions{display:flex;gap:10px;flex-wrap:wrap;}
+  .spawnBtn{flex:1 1 160px;background:#f5f7f9;border:1.5px solid var(--line);border-radius:13px;padding:16px 12px;
+      cursor:pointer;text-align:center;transition:border-color .15s,background .15s;}
+  .spawnBtn:hover{border-color:var(--accent);background:#eef4fa;}
+  .spawnBtn .icon{font-size:24px;margin-bottom:6px;}
+  .spawnBtn .title{font-weight:700;font-size:13px;color:var(--ink);}
+  .spawnBtn .desc{font-size:11px;color:var(--sub);margin-top:3px;line-height:1.5;}
+  #spawnCancel{margin-top:16px;background:none;border:none;color:var(--sub);font-size:12px;cursor:pointer;
+      text-decoration:underline;}
+
+  /* ---- 電気設備一覧モーダル（#spawnOverlayと同じ骨格。154件を収めるため本体をスクロール領域にする点が異なる） ---- */
+  #electricalSummaryOverlay{position:fixed;inset:0;z-index:30;background:rgba(18,22,26,.55);display:none;
+      align-items:center;justify-content:center;
+      padding:calc(var(--safe-t) + 20px) calc(var(--safe-r) + 20px) calc(var(--safe-b) + 20px) calc(var(--safe-l) + 20px);}
+  #electricalSummaryCard{background:#fff;border-radius:18px;padding:20px 22px;max-width:640px;width:100%;
+      max-height:80vh;display:flex;flex-direction:column;box-shadow:0 20px 60px rgba(0,0,0,.35);text-align:left;}
+  #electricalSummaryCard .fp-head{display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;flex-shrink:0;}
+  #electricalSummaryCard .fp-head span{font-size:15.5px;font-weight:700;color:var(--ink);}
+  #electricalSummaryCard .fp-head button{background:none;border:none;color:var(--sub);cursor:pointer;font-size:16px;padding:2px 4px;}
+  #electricalSummaryBody{overflow-y:auto;flex:1;padding-right:6px;}
+  .elecSummaryTotal{font-size:12.5px;color:var(--sub);margin:2px 0 12px;}
+  /* 見積書の明細ごとの現在数/見積数（renderEstimateLines()）。差があるものは.elecEstimateDiffで目立たせる */
+  .elecEstimateLine{padding:5px 8px;border-radius:8px;margin:2px 0;}
+  .elecEstimateLineHead{display:flex;justify-content:space-between;gap:8px;font-size:12.5px;color:var(--ink);}
+  .elecEstimateLineHead .count{color:var(--sub);white-space:nowrap;}
+  .elecEstimateLineTypes{font-size:10.5px;color:var(--sub);margin-top:2px;line-height:1.5;}
+  .elecEstimateDiff{background:#fff4e0;}
+  .elecEstimateDiff .elecEstimateLineHead .count{color:#a3672c;font-weight:700;}
+  .elecSummaryLevelTitle{font-size:13.5px;font-weight:700;margin:16px 0 8px;color:var(--ink);}
+  .elecSummaryRoom{margin-bottom:10px;}
+  .elecSummaryRoomName{font-size:12.5px;font-weight:700;color:var(--ink);margin-bottom:2px;}
+  .elecSummaryRoomName.empty{color:var(--sub);font-weight:400;}
+  /* 削除した設備の復元行（renderElectricalSummary()末尾） */
+  .elecDeletedRow{display:flex;align-items:center;justify-content:space-between;gap:8px;font-size:11.5px;
+      color:var(--sub);padding:3px 6px;}
+  .elecRestoreBtn{background:#eef4fa;border:1px solid var(--accent);color:var(--accent);border-radius:6px;
+      padding:3px 8px;font-size:11px;cursor:pointer;white-space:nowrap;}
+  .elecRestoreBtn:hover{background:var(--accent);color:#fff;}
+
+  /* ---- 電気設備の追加モーダル（#spawnOverlayと同じ骨格。項目数が少ないためスクロール領域は不要） ---- */
+  #electricalAddOverlay{position:fixed;inset:0;z-index:31;background:rgba(18,22,26,.55);display:none;
+      align-items:center;justify-content:center;
+      padding:calc(var(--safe-t) + 20px) calc(var(--safe-r) + 20px) calc(var(--safe-b) + 20px) calc(var(--safe-l) + 20px);}
+  #electricalAddCard{background:#fff;border-radius:18px;padding:20px 22px;max-width:360px;width:100%;
+      box-shadow:0 20px 60px rgba(0,0,0,.35);text-align:left;}
+  #electricalAddCard .fp-head{display:flex;align-items:center;justify-content:space-between;margin-bottom:4px;}
+  #electricalAddCard .fp-head span{font-size:15.5px;font-weight:700;color:var(--ink);}
+  #electricalAddCard .fp-head button{background:none;border:none;color:var(--sub);cursor:pointer;font-size:16px;padding:2px 4px;}
+  #electricalAddCard select{width:100%;border:1.5px solid var(--line);border-radius:7px;padding:6px 8px;
+      font-size:12px;color:var(--ink);background:#fff;}
+  #electricalAddCard .hand-label{font-size:10.5px;color:var(--sub);margin:2px 0 4px;}
+  #eaSubmit{background:var(--accent);color:#fff;}
+  #eaSubmit:hover{border-color:transparent;background:var(--accent-dark);}
+
+  @media (max-width:640px){
+    #ui{left:calc(var(--safe-l) + 10px);right:calc(var(--safe-r) + 10px);width:auto;top:auto;bottom:calc(var(--safe-b) + 12px);max-height:52vh;}
+    /* 平面図モードでは#editToggle・#doorEditToggleも表示され、幅の狭い画面では
+       justify-content:space-betweenのまま折り返せず、右端のボタンが画面外に
+       はみ出して押せなくなっていた（ページ自体はスクロールしない設定のため、
+       はみ出した分は永久に届かない）。折り返しを許可して2行以上になっても
+       全ボタンに指が届くようにする */
+    #topBar{top:calc(var(--safe-t) + 10px);left:calc(var(--safe-l) + 10px);right:calc(var(--safe-r) + 10px);
+        flex-wrap:wrap;justify-content:flex-start;row-gap:8px;}
+    #modeSwitch button{padding:8px 10px;font-size:11.5px;}
+    #floorToggle button{padding:8px 9px;font-size:11.5px;}
+    #editToggle,#doorEditToggle,#electricalEditToggle{padding:8px 12px;font-size:11.5px;}
+    #tip{display:none;}
+    /* 内覧モードのHUD（部屋名＋ボタン3つ）は、幅の狭い画面では1行に収まらず、
+       .roomがflexで極端に押しつぶされて1文字ずつ縦に折り返ってしまっていた。
+       折り返しを許可し、#topBar（同じ上端に表示されるモード切替ボタン）とも
+       高さで重ならないよう、#topBarの下（#minimapと同じ高さ）に位置をずらす */
+    #walkHud{top:calc(var(--safe-t) + 62px);flex-wrap:wrap;justify-content:center;
+        max-width:calc(100vw - var(--safe-l) - var(--safe-r) - 24px);row-gap:6px;padding:8px 12px;}
+    #walkHud button{padding:7px 9px;font-size:11px;}
+    /* ミニマップは#walkHud（折り返して複数行になりうる）と同じ右上に置くと隠れてしまうため、
+       スマホでは画面の空いている右下（バーチャルジョイスティックの反対側）へ移す */
+    #minimap{top:auto;right:calc(var(--safe-r) + 12px);bottom:calc(var(--safe-b) + 12px);width:150px;height:96px;}
+    /* #topBarは幅の狭い画面で折り返して複数行になりうるため（電気設備編集ボタンが2行目に
+       落ちることがある）、#walkHudと同様にオフセットを大きめに取って重ならないようにする。
+       #ui（左メニュー）は画面下側から52vhを占有して浮くため、max-heightを抑えて#uiの
+       上端（実測390x844で#topBarの下端から約280px）より手前で収まるようにする */
+    #electricalDock{top:calc(var(--safe-t) + 108px);width:calc(100vw - var(--safe-l) - var(--safe-r) - 24px);
+        max-width:320px;max-height:56vh;}
+    #edEditSection{max-height:32vh;}
+  }
+
+/* 内装の仕上げ（web/finishes.js）：編集ドックの「仕上げ」タブ、候補の入力、仕様一覧、内覧の案切替。 */
+
+#electricalDock .fin-panel{display:flex;flex-direction:column;gap:6px;}
+#electricalDock .fin-panel select{width:100%;}
+#electricalDock .fin-row{display:flex;gap:4px;align-items:center;}
+#electricalDock .fin-row select{flex:1;min-width:0;}
+#electricalDock .fin-row button, #electricalDock .fin-actions button, #electricalDock .fin-add{
+    border:1.5px solid var(--line);background:#f2f4f6;border-radius:8px;padding:6px 8px;font-size:11.5px;cursor:pointer;
+    white-space:nowrap;font-family:inherit;color:var(--ink);}
+#electricalDock .fin-actions{display:flex;flex-direction:column;gap:6px;margin-top:4px;}
+#electricalDock .fin-actions button.primary{background:var(--accent);color:#fff;border-color:var(--accent);}
+#electricalDock .fin-part{display:grid;grid-template-columns:44px 18px 1fr;gap:6px;align-items:center;}
+#electricalDock .fin-part-label{font-size:12px;font-weight:600;color:#4a5158;}
+#electricalDock .fin-wall-label{grid-column:1 / -1;font-weight:500;color:var(--sub);font-size:11px;margin-top:2px;}
+#electricalDock .fin-accents .fin-part{grid-template-columns:18px 1fr;}
+#electricalDock .fin-accents summary, #electricalDock .fin-candidates summary{cursor:pointer;font-size:11.5px;color:var(--sub);
+    padding:4px 0;}
+.fin-swatch{display:inline-block;width:18px;height:18px;border-radius:5px;border:1px solid rgba(0,0,0,.2);flex-shrink:0;}
+#electricalDock .fin-cand{display:flex;align-items:center;gap:6px;width:100%;text-align:left;border:none;background:none;
+    padding:4px 2px;font-size:12px;cursor:pointer;border-radius:6px;font-family:inherit;color:var(--ink);}
+#electricalDock .fin-cand:hover{background:#f2f4f6;}
+#electricalDock .fin-add{width:100%;margin-top:6px;background:var(--accent);color:#fff;border-color:var(--accent);}
+
+/* 候補の入力（確認ダイアログの中） */
+.fin-form{display:flex;flex-direction:column;gap:8px;}
+.fin-form-row{display:grid;grid-template-columns:72px 1fr;gap:8px;align-items:center;font-size:12.5px;}
+.fin-form-row:has(input[type=checkbox]){grid-template-columns:auto 1fr;}
+.fin-form select, .fin-input{width:100%;border:1.5px solid var(--line);border-radius:7px;padding:6px 8px;font-size:12.5px;
+    font-family:inherit;background:#fff;}
+.fin-form input[type=color]{width:56px;height:32px;border:1px solid var(--line);border-radius:6px;padding:2px;background:#fff;}
+
+/* 仕様一覧 */
+.fin-spec{border-collapse:collapse;width:100%;font-size:12px;}
+.fin-spec th, .fin-spec td{border:1px solid var(--line);padding:6px 8px;text-align:left;vertical-align:top;}
+.fin-spec th{background:#f6f8fa;position:sticky;top:0;}
+.fin-spec td.fin-undecided{color:#9aa1a8;}
+.fin-spec-wrap{max-height:52vh;overflow:auto;}
+.fin-spec-summary{font-size:12px;font-weight:600;margin:0 0 8px;}
+
+/* 内覧の上部：仕上げの案の切替 */
+#walkHud #walkSchemeSelect{border:none;border-radius:8px;padding:7px 8px;font-size:12px;background:#fff;color:#222b32;
+    font-family:inherit;cursor:pointer;}
+#walkHud #walkSchemeSelect[hidden]{display:none;}
+
+/* 設備（この案）：採用品の選択肢（例：キッチンのIH背面） */
+#electricalDock .fin-option{display:flex;flex-direction:column;gap:3px;font-size:11.5px;color:#4a5158;}
+
+/* 閲覧版（scripts/build-viewer.mjs が組み立てる claude.ai の非公開ページ）だけで使う。 */
+:root{color-scheme:light}
+html,body{height:100%}
+body{background:#dfe3e7}
+
+/* 編集・保存の部品は閲覧版では出さない（スクリプトも入れていない） */
+#editToggle,#doorEditToggle,#electricalEditToggle,#editHint,#doorEditHint,
+#electricalDock,#electricalAddOverlay,#electricalSummaryOverlay,
+#furniturePanel,#furnitureBar,#doorPanel,#doorBar{display:none!important}
+
+#vwBadge{display:inline-flex;align-items:center;gap:4px;background:rgba(255,255,255,.94);border-radius:11px;
+  padding:8px 12px;font-size:12px;font-weight:600;color:#4a5158;box-shadow:0 3px 12px rgba(0,0,0,.18);white-space:nowrap}
+#vwBadge small{font-weight:500;color:#6b7480}
+#vwSection{display:flex;flex-direction:column;gap:6px;margin-bottom:6px}
+#vwSection select{width:100%;border:1.5px solid #e4e7ea;border-radius:8px;padding:7px 8px;font-size:13px;background:#fff;color:#222b32}
+#vwSection .vw-row{display:flex;gap:6px}
+#vwSection .vw-row select{flex:1;min-width:0}
+#vwSection button{border:1.5px solid #e4e7ea;background:#f2f4f6;border-radius:8px;padding:7px 10px;font-size:13px;
+  cursor:pointer;white-space:nowrap;font-family:inherit;color:#222b32}
+#vwSection #vwWalk{background:#3a6ea5;border-color:#3a6ea5;color:#fff}
+
+/* スマホ幅：内覧の上部を「三人称に切替」「終了」だけにして、視界をあける（2026-11-08 施主指示） */
+#vwRoll{display:none}
+@media (max-width:640px){
+  #walkHud .room,#walkSwitchSpawn,#walkSchemeSelect,#walkRollToggle{display:none!important}
+  #walkHud{padding:6px 8px}
+  body.vw-walk #vwBadge{display:none}
+  /* ロールスクリーンの上げ下げは、スクリーンのある部屋に入ったときだけ（web/viewer.js）。ジョイスティックの上、ミニマップの左 */
+  #vwRoll{position:fixed;left:50%;transform:translateX(-50%);bottom:calc(var(--safe-b) + 140px);z-index:22;
+    background:rgba(20,26,32,.72);color:#fff;border:none;border-radius:10px;padding:9px 14px;font-size:12px;
+    font-family:inherit;white-space:nowrap;box-shadow:0 4px 14px rgba(0,0,0,.28);backdrop-filter:blur(4px)}
+  #vwRoll:not([hidden]){display:block}
+}
+
+.vw-overlay{position:fixed;inset:0;z-index:100;background:rgba(20,28,36,.45);display:flex;align-items:center;justify-content:center;
+  padding:max(16px,env(safe-area-inset-top,0px)) max(16px,env(safe-area-inset-right,0px)) max(16px,env(safe-area-inset-bottom,0px)) max(16px,env(safe-area-inset-left,0px))}
+.vw-dialog{background:#fff;border-radius:14px;max-width:720px;width:100%;max-height:100%;display:flex;flex-direction:column;
+  box-shadow:0 12px 40px rgba(0,0,0,.3);color:#222b32}
+.vw-dialog-title{font-weight:700;font-size:15px;padding:14px 16px 6px}
+.vw-dialog-body{padding:0 16px;overflow:auto;min-height:0;font-size:13px}
+.vw-dialog-buttons{display:flex;justify-content:flex-end;gap:8px;padding:12px 16px}
+.vw-dialog-buttons button{border:1.5px solid #e4e7ea;background:#f2f4f6;border-radius:8px;padding:8px 14px;font-size:13px;cursor:pointer;font-family:inherit}
+.vw-dialog-buttons button.primary{background:#3a6ea5;border-color:#3a6ea5;color:#fff}
+
+</style>
+</head>
+<body>
+<script src="viewer-config.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<div id="canvas-wrap"></div>
+<div id="labelLayer" style="position:fixed;inset:0;pointer-events:none;"></div>
+
+<div id="topBar">
+  <button id="menuToggle" title="メニューの表示/非表示">☰</button>
+  <div id="modeSwitch">
+    <button id="modeOrbit" data-mode="orbit">◔ 俯瞰</button>
+    <button id="modeTop" data-mode="top" class="active">▦ 平面図</button>
+    <button id="modeWalk" data-mode="walk">🚶 内覧</button>
+  </div>
+  <button id="editToggle" title="家具の配置を編集（平面図モード限定）">✎ 家具編集</button>
+  <button id="doorEditToggle" title="窓・ドアの配置を編集（平面図モード限定）">✎ 窓・ドア編集</button>
+  <button id="electricalEditToggle" title="電気設備の配置を編集（俯瞰モード限定）">✎ 電気設備編集</button>
+  <div id="compass" title="方位（俯瞰モード）">
+    <div id="compassDial">
+      <span class="n">N</span><span class="e">E</span><span class="s">S</span><span class="w">W</span>
+    </div>
+  </div>
+</div>
+<div id="editHint">家具を選択して移動・回転・サイズ変更・削除できます（Deleteキーでも削除）。削除後は下のバーから復元できます</div>
+<div id="doorEditHint">窓・ドアをタップ/クリックで選択→壁に沿ってドラッグでスライド。選択中は下のパネルで種類・サイズ・開き勝手を変更</div>
+
+<!-- ---- 電気設備編集ドック（俯瞰モード・電気設備編集ON時のみ表示。旧・右上パネル/右下編集
+     パネル/左下バー/上部ヒント帯/左メニューの部屋フォーカス・一覧ボタンを1本に統合） ---- -->
+<div id="electricalDock">
+  <div id="edNav">
+    <div class="fp-head"><span>✎ 電気設備編集</span><button id="edCloseBtn" title="編集を終了">✕</button></div>
+    <select id="roomFocusSelect"><option value="">部屋を選択...</option></select>
+    <div class="ed-nav-row">
+      <button id="roomFocusClearBtn" disabled>フォーカス解除</button>
+      <button id="electricalSummaryOpenBtn">全設備の一覧</button>
+    </div>
+    <div class="sub" style="margin:0;">部屋を選ぶとその部屋だけ表示。設備をクリックで選択→壁付けは壁に沿って、天井/床付けは自由にドラッグで移動できます。</div>
+  </div>
+  <div id="edListSection">
+    <div class="fp-head" id="roomFocusElecPanelHead"></div>
+    <div id="roomFocusElecPanelBody"></div>
+    <button id="roomFocusElecAddBtn">＋ この部屋に設備を追加</button>
+  </div>
+  <div id="edEditSection">
+    <div class="fp-head">
+      <span id="epLabel">-</span>
+      <button id="epClose" title="選択解除">✕</button>
+    </div>
+    <div class="fp-row">
+      <select id="epType"></select>
+    </div>
+    <div class="fp-row fp-dims">
+      <label>幅<input type="number" id="epWidth" step="0.01" min="0.01"></label>
+      <label>奥行<input type="number" id="epDepth" step="0.01" min="0.01"></label>
+      <label>高さ<input type="number" id="epHeight" step="0.01" min="0.01"></label>
+    </div>
+    <div class="fp-row fp-dims">
+      <label>X<input type="number" id="epPosX" step="0.01"></label>
+      <label>Y<input type="number" id="epPosY" step="0.01" min="0"></label>
+      <label>Z<input type="number" id="epPosZ" step="0.01"></label>
+    </div>
+    <div class="fp-row">
+      <button id="epHeightPreset" title="X/Z/壁面はそのまま、Yだけ型の標準高さに戻す">高さ(Y)を標準に戻す</button>
+    </div>
+    <div class="fp-row" id="epWallArea">
+      <div class="hand-label">設置している壁</div>
+      <select id="epWallSelect"></select>
+    </div>
+    <div class="fp-row" id="epSideArea">
+      <div class="hand-label">向き（壁のどちら面か）</div>
+      <div class="hand-row">
+        <button id="epSidePos">＋側</button>
+        <button id="epSideNeg">－側</button>
+      </div>
+    </div>
+    <div class="fp-row">
+      <button id="epDuplicate">⧉ この設備を複製</button>
+    </div>
+    <div class="fp-row">
+      <button id="epReset">この項目をリセット</button>
+    </div>
+    <div class="fp-row">
+      <button id="epDelete" class="danger">🗑 この設備を削除</button>
+    </div>
+  </div>
+  <div id="edFooter">
+    <span id="ebCount"></span>
+    <div class="ed-footer-row">
+      <button id="ebUndo" title="元に戻す（Ctrl+Z）">↶ 元に戻す</button>
+      <button id="ebRedo" title="やり直す（Ctrl+Shift+Z）">↷ やり直す</button>
+    </div>
+    <div class="ed-footer-row">
+      <button id="ebExport">⬇ electrical.jsonを書き出す</button>
+      <button id="ebClearAll">編集をすべて取り消す</button>
+    </div>
+  </div>
+</div>
+
+<!-- ---- 電気設備の追加モーダル（部屋フォーカス中のみ開ける） ---- -->
+<div id="electricalAddOverlay">
+  <div id="electricalAddCard">
+    <div class="fp-head">
+      <span>電気設備を追加</span>
+      <button id="electricalAddClose" title="閉じる">✕</button>
+    </div>
+    <div class="sub" id="electricalAddRoomLabel" style="margin:0 0 10px;"></div>
+    <div class="fp-row">
+      <select id="eaType"></select>
+    </div>
+    <div class="fp-row" id="eaWallArea">
+      <div class="hand-label">壁面（この部屋に接する壁だけを候補にしています）</div>
+      <select id="eaWall"></select>
+    </div>
+    <div class="sub" id="eaCeilingHint" style="margin:4px 0 0;">部屋の中央付近に配置します。追加後にドラッグやXYZ入力で自由に動かせます。</div>
+    <div class="fp-row">
+      <button id="eaSubmit">この内容で追加</button>
+    </div>
+  </div>
+</div>
+
+<div id="ui">
+  <h1>自宅新築プロジェクト 内装白模型 v0.1</h1>
+
+  <div class="section-title">表示フロア</div>
+  <div id="floorToggle">
+    <button id="btnBoth">両方</button>
+    <button id="btn1F" class="active">1F</button>
+    <button id="btn2F">2F</button>
+  </div>
+  <div class="sub" style="margin:6px 0 0;">1F/2F切替時、選択していない階は非表示になります。内覧モード中はスポーン地点で階が決まります。</div>
+
+  <div class="section-title">商品の色・サイズ</div>
+  <div id="productControls"></div>
+  <div class="sub" style="margin:4px 0 0;">円卓のサイズ・色、ソファの色、キッチン・カップボードの扉カラーをここで切り替えられます（この端末の下書き）。扉カラーは表示中の仕上げの案に入ります。</div>
+
+  <div class="section-title">入れ替えセット</div>
+  <div id="variantSets"></div>
+  <div class="sub" style="margin:4px 0 0;">家具と、それに連動する照明の位置が組ごとに入れ替わります。切り替えはこの端末の下書きです（編集画面で保存するとUEにも反映されます）。</div>
+
+  <div class="section-title">表示レイヤー</div>
+  <label><input type="checkbox" id="chkSound" checked> 防音壁（民泊-自宅境界）</label>
+  <label><input type="checkbox" id="chkRoof"> 屋根（1F片流れ＋2F切妻）</label>
+  <label><input type="checkbox" id="chkDims" checked> 寸法値を表示（1F・mm単位）</label>
+  <label><input type="checkbox" id="chkLabels"> 部屋ラベル</label>
+  <label><input type="checkbox" id="chkFurnitureLabels"> 家具ラベル</label>
+  <label><input type="checkbox" id="chkElectrical" checked> 電気設備（コンセント・スイッチ・照明・情報系）</label>
+  <!-- 154箇所の完全配置後はチェックを入れると平面全体では文字が密集してしまうため、
+       家具ラベルと同様デフォルトOFF。俯瞰モードの部屋フォーカスと組み合わせて使う想定 -->
+  <label><input type="checkbox" id="chkElectricalLabels"> 電気設備ラベル</label>
+  <label><input type="checkbox" id="chkGrid" checked> 地面グリッド(910mm)</label>
+  <label><input type="checkbox" id="chkRollDown" checked> ロールスクリーンを下ろす（夜・映画）</label>
+
+  <div class="sub" style="margin:6px 0 0;">家具・窓ドア・電気設備は、上の「✎ 編集」から平面図・俯瞰のどちらでも編集できます。</div>
+
+  <!-- 2026-10 UI整理：凡例と注意書きは普段は畳んでおき、必要なときだけ開く -->
+  <details class="ui-fold">
+  <summary class="section-title">凡例と注意書き</summary>
+  <div class="legend-item"><div class="swatch" style="background:#ffd479;"></div>概算：室内間仕切り（●高 ◐中 ○低）</div>
+  <div class="legend-item"><div class="swatch" style="background:#e05252;"></div>確定：民泊-自宅 防音壁（小屋裏まで張り上げ）</div>
+  <div class="legend-item"><div class="swatch" style="background:#6fb3e0;"></div>確定：窓</div>
+  <div class="legend-item"><div class="swatch" style="background:#2a9d8f;"></div>ニッチ（壁のくぼみ。飾り棚など／status: estimated）</div>
+  <div class="legend-item"><div class="swatch" style="background:#ff1fb0;"></div>確定：ドア（外部・室内とも共通色）</div>
+  <div class="legend-item"><div class="swatch" style="background:#a89f8f;"></div>屋根：1F片流れ（平屋部A1/A2、1.5寸勾配。x=9.100の継ぎ目は簡略化）／2F切妻（3寸勾配、棟は東西方向。妻壁は未モデル化）</div>
+  <div class="legend-item"><div class="swatch" style="background:#b98d5e;"></div>家具・設備（配置検討中。位置・サイズとも仮／status: estimated）</div>
+  <div class="legend-item"><div class="swatch" style="background:#8e24aa;"></div>電気設備：コンセント・スイッチ（壁面、見積書に基づく機械配置のたたき台／status: estimated）</div>
+  <div class="legend-item"><div class="swatch" style="background:#00897b;"></div>電気設備：情報系配線（LAN・TV・インターホン）</div>
+  <div class="legend-item"><div class="swatch" style="background:#ffab00;"></div>電気設備：照明（ダウンライト・シーリング・ブラケット・ペンダント）</div>
+  <div class="legend-item"><div class="swatch" style="background:#37474f;"></div>電気設備：分電盤・エアコンスリーブ・換気扇</div>
+  <hr>
+  <div style="font-size:11px;color:#777;line-height:1.6;">
+  天井高は全室2,400mm（推測・要施工会社確認）を暫定採用。<br>
+  室内間仕切りの正確な壁位置はCAD原本があれば精度が上がります。<br>
+  内覧モードの壁の当たり判定は概算です（実測厚みではなく簡略化した厚みを使用）。<br>
+  家具・設備は日本の住宅設備の標準寸法をもとにした仮配置で、実測値ではありません。
+  </div>
+  </details>
+</div>
+
+<div id="tip">俯瞰: 左ドラッグ回転／右ドラッグ平行移動／ホイールズーム　｜　平面図: ドラッグ平行移動／ホイールズーム　｜　内覧: WASD移動／ドラッグ視点／Vで三人称切替</div>
+
+<!-- ---- 内覧（一人称）モードのHUD ---- -->
+<div id="walkHud">
+  <span class="room">内覧モード</span>
+  <button id="walkToggleView">🧍 三人称に切替</button>
+  <button id="walkSwitchSpawn">🚪 玄関を選び直す</button>
+  <button id="walkRollToggle">🪟 スクリーンを上げる</button>
+  <button id="walkExit">✕ 終了</button>
+</div>
+<div id="crosshair"></div>
+<div id="fovHint"></div>
+<div id="moveHint">WASD / 矢印キーで移動　｜　ドラッグで視点操作　｜　Vキーで一人称/三人称切替</div>
+<canvas id="minimap" width="220" height="140" title="クリックした場所へ移動"></canvas>
+<div id="joyBase"><div id="joyKnob"></div></div>
+
+<!-- ---- 家具編集パネル（平面図モード・編集トグルON時のみ） ---- -->
+<div id="furniturePanel">
+  <div class="fp-head">
+    <span id="fpLabel">-</span>
+    <button id="fpClose" title="選択解除">✕</button>
+  </div>
+  <div class="fp-row">
+    <button id="fpRotate">↻ 90度回転</button>
+  </div>
+  <div class="fp-row fp-dims">
+    <label>幅<input type="number" id="fpWidth" step="0.05" min="0.05"></label>
+    <label>奥行<input type="number" id="fpDepth" step="0.05" min="0.05"></label>
+    <label>高さ<input type="number" id="fpHeight" step="0.05" min="0.05"></label>
+  </div>
+  <div class="fp-row">
+    <label>底面の床上高さ<input type="number" id="fpElevation" step="0.05" min="0"></label>
+  </div>
+  <div id="fpProduct" style="display:none">
+    <label>天板色<select id="fpProductTop" onchange="applyProductFinish()"><option value="ivory">アイボリー</option><option value="white">ホワイト</option><option value="gray">グレー</option><option value="black">ブラック</option></select></label>
+    <label>脚の材種<select id="fpProductLegs" onchange="applyProductFinish()"><option value="red-oak">レッドオーク</option><option value="walnut">ウォールナット</option></select></label>
+    <div style="font-size:12px">実寸モデル：1600×850×720mm。丸い端は初期向きで東側です。</div>
+  </div>
+  <div id="fpMarEa" style="display:none">
+    <label>サイズ（天板の直径）<select id="fpMarSize" onchange="applyMarEa()"></select></label>
+    <label>天板の色<select id="fpMarTop" onchange="applyMarEa()"></select></label>
+    <label>脚の木<select id="fpMarLegs" onchange="applyMarEa()"></select></label>
+    <div style="font-size:12px">高さ720mm・脚の下の直径600mm。色は写真の見本からの目安で、実物と一致しません。</div>
+  </div>
+  <div id="fpWq19" style="display:none">
+    <label>フレームの材質<select id="fpWqFrame" onchange="applyWq19()"></select></label>
+    <label>クッションの色<select id="fpWqFabric" onchange="applyWq19()"></select></label>
+    <div style="font-size:12px">幅205×奥行き90cm、付属の背クッション込みで高さ78cm。寸法は固定です。色は写真からの目安で、実物と一致しません。</div>
+  </div>
+  <div id="fpProductParts" class="pp-panel" style="display:none"></div>
+  <div id="fpStorage" style="display:none">
+    <label id="fpRailsLabel">パイプ高さ（m・低い順にカンマ区切り）<input id="fpRails" type="text" placeholder="1.00, 1.95"></label>
+    <label id="fpShelvesLabel">棚板高さ（m・カンマ区切り）<input id="fpShelves" type="text"></label>
+    <label id="fpContentsLabel"><input id="fpContents" type="checkbox">収納物の見本を表示</label>
+    <div id="fpStorageError" role="alert" style="color:#a22;font-size:12px"></div>
+  </div>
+  <div class="fp-row">
+    <button id="fpReset">この家具をリセット</button>
+  </div>
+  <div class="fp-row">
+    <button id="fpDelete" class="danger">🗑 この家具を削除</button>
+  </div>
+</div>
+<div id="furnitureBar">
+  <input id="fbAddSearch" type="search" placeholder="家具名で検索" aria-label="追加する家具を検索">
+  <select id="fbAddType" aria-label="追加する家具（カテゴリ別）"></select>
+  <select id="fbAddRoom" aria-label="家具を追加する部屋"></select>
+  <button id="fbAdd">選んだ部屋へ追加</button>
+  <select id="fbDeleted" aria-label="削除した家具を選ぶ" style="display:none"></select>
+  <button id="fbRestoreDeleted" style="display:none">削除した家具を戻す</button>
+  <span id="fbCount"></span>
+  <button id="fbExport">⬇ furniture.jsonを書き出す</button>
+  <button id="fbClearAll">編集をすべて取り消す</button>
+</div>
+
+<!-- ---- 窓・ドア編集パネル（平面図モード・編集トグルON時のみ） ---- -->
+<div id="doorPanel">
+  <div class="fp-head">
+    <span id="dpLabel">-</span>
+    <button id="dpClose" title="選択解除">✕</button>
+  </div>
+  <div class="fp-row">
+    <select id="dpType"></select>
+  </div>
+  <div class="fp-row fp-dims">
+    <label>幅<input type="number" id="dpWidth" step="0.05" min="0.05"></label>
+    <label>高さ<input type="number" id="dpHeight" step="0.05" min="0.05"></label>
+    <label id="dpSillLabel">シル高<input type="number" id="dpSill" step="0.05" min="0"></label>
+  </div>
+  <div id="dpHandArea"></div>
+  <div class="fp-row">
+    <button id="dpReset">この項目をリセット</button>
+  </div>
+</div>
+<div id="doorBar">
+  <span id="dbCount"></span>
+  <button id="dbExportOpenings">⬇ openings.json</button>
+  <button id="dbExportDoors">⬇ interior-doors.json</button>
+  <button id="dbClearAll">編集をすべて取り消す</button>
+</div>
+
+<!-- ---- スポーン地点選択オーバーレイ ---- -->
+<div id="spawnOverlay">
+  <div id="spawnCard">
+    <h2>どちらから歩き始めますか</h2>
+    <p>玄関を選ぶと、その場所からその階を一人称視点で歩けます。</p>
+    <div class="spawnOptions">
+      <div class="spawnBtn" id="spawnMinpaku">
+        <div class="icon">🏠</div>
+        <div class="title">民泊棟 玄関から</div>
+        <div class="desc">1F・玄関(民泊)〜LDK(民泊)側</div>
+      </div>
+      <div class="spawnBtn" id="spawnJitaku">
+        <div class="icon">🏡</div>
+        <div class="title">自宅 玄関から</div>
+        <div class="desc">1F・自宅玄関ホール側</div>
+      </div>
+    </div>
+    <button id="spawnCancel">やめる</button>
+  </div>
+</div>
+
+<!-- ---- 電気設備一覧モーダル ---- -->
+<div id="electricalSummaryOverlay">
+  <div id="electricalSummaryCard">
+    <div class="fp-head">
+      <span>電気設備一覧</span>
+      <button id="electricalSummaryClose" title="閉じる">✕</button>
+    </div>
+    <div id="electricalSummaryBody"></div>
+  </div>
+</div>
+
+<script src="generated/house-data.js"></script>
+<script src="web/products.js"></script>
+<script src="app1.js"></script>
+<!-- ランチャー（ローカルサーバー）との連携：保存・UEに反映・UEで内覧・下書きの引き継ぎ。
+     2026-10：GitHub Pages公開をやめてローカル専用にしたため、Pages用のService Worker（sw.js）は撤去した
+     （ローカルサーバー上では /api/ の応答やCSSを古いままキャッシュして表示が更新されなくなるため）。 -->
+<script src="web/finishes-core.js"></script>
+<script src="web/finishes.js"></script>
+<script src="web/viewer.js"></script>
+</body></html>
