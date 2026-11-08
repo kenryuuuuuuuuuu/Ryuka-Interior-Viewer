@@ -2068,7 +2068,13 @@ function saveDeletedFurniture(){
   try { localStorage.setItem(FURNITURE_DELETED_KEY,JSON.stringify(deletedFurniture)); } catch(e){}
 }
 function saveFurnitureEdits(){ try{ localStorage.setItem(FURNITURE_EDITS_KEY, JSON.stringify(furnitureEdits)); } catch(e){} }
-function effectiveFurniture(item){ const e = furnitureEdits[item.id]; return e ? {...item, ...e} : item; }
+// 購入して確定した家具（purchased）は、色・サイズの編集（端末に残っている古い下書きを含む）を無視する。位置・向きは動かせる
+function effectiveFurniture(item){
+  const e = furnitureEdits[item.id];
+  if(!e) return item;
+  if(item.purchased){ const {productFinish, width, depth, height, ...moves} = e; return {...item, ...moves}; }
+  return {...item, ...e};
+}
 // ---- 入れ替えセット（data/furniture.json の variantSets。例：ダイニングの WILLTIC／MAR_EA）----
 // 表示中の組は、正本の active を、furnitureEdits の特別なキー __variants（この端末の下書き）が上書きする。
 // 家具・電気設備の set/variant が表示中の組と一致しないものは、配置・歩行の当たり判定・見積の数量に入らない
@@ -2191,6 +2197,8 @@ function updateFurniturePanel(){
   for(const id of ['fpWidth','fpDepth','fpHeight']) document.getElementById(id).disabled=isProduct||isParts||isMarEa||isWq19;
   if(isWq19){const cfg=wq19Settings(eff.width,eff.depth,eff.height,eff.productFinish);document.getElementById('fpWqFrame').value=cfg.frame;document.getElementById('fpWqFabric').value=cfg.fabric;}
   if(isMarEa){const cfg=marEaSettings(eff.width,eff.depth,eff.height,eff.productFinish);document.getElementById('fpMarSize').value=String(Math.round(eff.width*100));document.getElementById('fpMarTop').value=cfg.top;document.getElementById('fpMarLegs').value=cfg.legs;}
+  // 購入して確定した商品は、色・サイズの選択欄を使えなくする（位置と向きは動かせる）
+  for(const id of ['fpMarSize','fpMarTop','fpMarLegs','fpWqFrame','fpWqFabric','fpProductTop','fpProductLegs']) document.getElementById(id).disabled=!!base.purchased;
   if(isProduct){const cfg=willticSettings(eff.width,eff.depth,eff.height,eff.productFinish);document.getElementById('fpProductTop').value=cfg.top;document.getElementById('fpProductLegs').value=cfg.legs;}
   if(isParts) RyukaProducts.buildFinishPanel(document.getElementById('fpProductParts'),eff,applyProductPartsFinish);
   const isStorage=STORAGE_SHAPES.includes(shape);
@@ -2208,7 +2216,7 @@ function updateFurniturePanel(){
 }
 function applyProductFinish(){
   const base=FURNITURE_ITEMS.find(f=>f.id===selectedFurnitureId);
-  if(!base||FURNITURE_CATALOG[base.type].shape!=='willticHalfRound')return;
+  if(!base||FURNITURE_CATALOG[base.type].shape!=='willticHalfRound'||base.purchased)return;
   const eff=effectiveFurniture(base);
   const productFinish=willticSettings(eff.width,eff.depth,eff.height,{top:document.getElementById('fpProductTop').value,legs:document.getElementById('fpProductLegs').value});
   furnitureEdits[base.id]={...(furnitureEdits[base.id]||{}),productFinish};
@@ -2219,6 +2227,7 @@ function applyProductFinish(){
 function setMarEaChoice(id,patch){
   const base=FURNITURE_ITEMS.find(f=>f.id===id);
   if(!base||FURNITURE_CATALOG[base.type].shape!=='roundPedestalTable')return;
+  if(base.purchased){updateFurniturePanel();return;}   // 購入して確定した商品は、色・サイズを変えない
   const eff=effectiveFurniture(base), current=marEaSettings(eff.width,eff.depth,eff.height,eff.productFinish);
   const diameter=patch.size!==undefined ? Number(patch.size)/100 : eff.width;
   let productFinish;
@@ -2237,6 +2246,7 @@ function applyMarEa(){
 function setWq19Choice(id,patch){
   const base=FURNITURE_ITEMS.find(f=>f.id===id);
   if(!base||FURNITURE_CATALOG[base.type].shape!=='wq19Sofa')return;
+  if(base.purchased){updateFurniturePanel();return;}   // 購入して確定した商品は、色を変えない
   const eff=effectiveFurniture(base), current=wq19Settings(eff.width,eff.depth,eff.height,eff.productFinish);
   let productFinish;
   try{productFinish=wq19Settings(eff.width,eff.depth,eff.height,{frame:patch.frame ?? current.frame,fabric:patch.fabric ?? current.fabric});}
@@ -2304,13 +2314,14 @@ function refreshProductControls(){
     let rows;
     try{ rows=spec(effectiveFurniture(item)); }catch(e){ continue; }
     const wrap=document.createElement('div');
-    const title=document.createElement('div'); title.textContent=item.label||item.type; title.style.fontWeight='600'; title.style.margin='6px 0 2px';
+    const title=document.createElement('div'); title.textContent=(item.label||item.type)+(item.purchased?'（購入済み・固定）':''); title.style.fontWeight='600'; title.style.margin='6px 0 2px';
     wrap.appendChild(title);
     for(const row of rows){
       const label=document.createElement('label'); label.textContent=row.label;
       const select=document.createElement('select');
       for(const [value,text] of row.options){ const option=document.createElement('option'); option.value=value; option.textContent=text; select.appendChild(option); }
       select.value=row.value;
+      if(item.purchased) select.disabled=true;   // 購入して確定した商品は、色・サイズを変えられない（docs/FIXED-FURNITURE.md）
       select.onchange=()=>row.set(item.id,select.value);
       label.appendChild(select); wrap.appendChild(label);
     }
@@ -2482,6 +2493,7 @@ function buildFurniturePayload(){
     if(eff.storage) out.storage = eff.storage;
     if(eff.productFinish) out.productFinish = eff.productFinish;
     if(base.set !== undefined){ out.set = base.set; out.variant = base.variant; }
+    if(base.purchased) out.purchased = true;
     out.status = base.status;
     if(base.note) out.note = base.note;
     return out;
