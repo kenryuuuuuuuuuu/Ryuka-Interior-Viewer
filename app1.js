@@ -1659,9 +1659,37 @@ function armChairParts(w,d,h){
   }
   return parts;
 }
+// ---- テレビボード HOMESIC「Parallel」210 Low Board（W2100 D385 H398 WN）とテレビ ソニー KJ-65X75WL（2026-11-09 確定）----
+// 部品は blender/furniture_assets.py の parallel_board_parts()／bravia65_parts() と同じ（tests/test_tv_set.py が突き合わせる）。
+// +zが正面。テレビは「床からの高さ」（elevation）でボードの天板の上に乗せる。寸法は固定
+const PARALLEL_BOARD={width:2.1,depth:.385,height:.398,wood:0x6f4a2f,dark:0x2a1e15};
+function parallelBoardParts(w,d,h){
+  if([w,d,h].some((v,i)=>!Number.isFinite(v)||Math.abs(v-[PARALLEL_BOARD.width,PARALLEL_BOARD.depth,PARALLEL_BOARD.height][i])>1e-7)) throw Error('このテレビボードは幅2.1・奥行0.385・高さ0.398m専用です');
+  const parts=[['top',[-1.05,1.05,-.1925,.1925,.368,.398],'wood'],
+    ['body',[-.99,.99,-.17,.165,.125,.368],'dark'],
+    ['plinth',[-1.02,1.02,-.185,.185,.1,.125],'wood']];
+  const edges=[[-.98,-.34],[-.32,.32],[.34,.98]], slats=[[.137,.207],[.213,.283],[.289,.359]];
+  edges.forEach(([x0,x1],i)=>slats.forEach(([y0,y1],j)=>parts.push([`drawer-${i+1}-slat-${j+1}`,[x0,x1,.15,.175,y0,y1],'wood'])));
+  for(const [sx,sz] of [[-1,-1],[-1,1],[1,-1],[1,1]]) parts.push([`leg-${sx<0?'left':'right'}-${sz<0?'rear':'front'}`,[sx*.82-.02,sx*.82+.02,sz*.12-.02,sz*.12+.02,0,.1],'wood',true]);
+  return parts;
+}
+const BRAVIA_65={width:1.462,depth:.334,height:.912,black:0x141416,screen:0x07070a};
+function bravia65Parts(w,d,h){
+  if([w,d,h].some((v,i)=>!Number.isFinite(v)||Math.abs(v-[BRAVIA_65.width,BRAVIA_65.depth,BRAVIA_65.height][i])>1e-7)) throw Error('このテレビは幅1.462・奥行0.334・高さ0.912m専用です');
+  const parts=[['panel',[-.731,.731,-.12,-.049,.07,.912],'black'],['screen',[-.725,.725,-.0495,-.0485,.076,.906],'screen']];
+  for(const [side,sx] of [['left',-1],['right',1]]){
+    parts.push([`foot-${side}`,[sx*.5275-.06,sx*.5275+.06,-.167,.167,0,.012],'black']);
+    parts.push([`neck-${side}`,[sx*.5275-.025,sx*.5275+.025,-.115,-.055,.012,.07],'black']);
+  }
+  return parts;
+}
 const STUDY_MATS={wood:()=>FMAT.wood, frame:()=>FMAT.dark, fabric:()=>marEaMat('task-chair-fabric',()=>new THREE.MeshStandardMaterial({color:0xb9b7b2,roughness:.85}))};
 const ARM_CHAIR_MATS={wood:()=>marEaMat('arm-chair-wood',()=>new THREE.MeshStandardMaterial({color:ARM_CHAIR.wood,roughness:.55})),
   seat:()=>marEaMat('arm-chair-seat',()=>new THREE.MeshStandardMaterial({color:ARM_CHAIR.seatColor,roughness:.5}))};
+const PARALLEL_MATS={wood:()=>marEaMat('parallel-wood',()=>new THREE.MeshStandardMaterial({color:PARALLEL_BOARD.wood,roughness:.5})),
+  dark:()=>marEaMat('parallel-dark',()=>new THREE.MeshStandardMaterial({color:PARALLEL_BOARD.dark,roughness:.7}))};
+const BRAVIA_MATS={black:()=>marEaMat('bravia-black',()=>new THREE.MeshStandardMaterial({color:BRAVIA_65.black,roughness:.4})),
+  screen:()=>marEaMat('bravia-screen',()=>new THREE.MeshStandardMaterial({color:BRAVIA_65.screen,roughness:.12}))};
 function addPartBoxes(g,parts,mats=STUDY_MATS){
   for(const [name,b,m,cyl,polygon] of parts){
     if(polygon){   // 平面の多角形を高さ方向へ押し出す（drawShellChair の背と同じ向き）
@@ -1893,6 +1921,8 @@ const FURNITURE_SHAPES = {
   taskChair(g,w,d,h){ addPartBoxes(g,taskChairParts(w,d,h)); },
   armChair(g,w,d,h){ addPartBoxes(g,armChairParts(w,d,h),ARM_CHAIR_MATS); },
   lotusTable(g,w,d,h){ drawLotus(g,w,d,h); },
+  parallelBoard(g,w,d,h){ addPartBoxes(g,parallelBoardParts(w,d,h),PARALLEL_MATS); },
+  bravia65(g,w,d,h){ addPartBoxes(g,bravia65Parts(w,d,h),BRAVIA_MATS); },
   // 採用品（web/products.js）：部品は data/products/*.json から。案の選択肢で見た目が変わる
   product(g,w,d,h,o){RyukaProducts.draw(g,o.product,w,d,h,o.finish,o.options,o.yaw);},
   closetSingle(g,w,d,h,o){drawStorage(g,'closetSingle',w,d,h,o);},
