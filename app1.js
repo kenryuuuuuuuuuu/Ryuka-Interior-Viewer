@@ -1676,10 +1676,10 @@ function parallelBoardParts(w,d,h){
 const BRAVIA_65={width:1.462,depth:.334,height:.912,black:0x141416,screen:0x07070a};
 function bravia65Parts(w,d,h){
   if([w,d,h].some((v,i)=>!Number.isFinite(v)||Math.abs(v-[BRAVIA_65.width,BRAVIA_65.depth,BRAVIA_65.height][i])>1e-7)) throw Error('このテレビは幅1.462・奥行0.334・高さ0.912m専用です');
-  const parts=[['panel',[-.731,.731,-.12,-.049,.07,.912],'black'],['screen',[-.725,.725,-.0495,-.0485,.076,.906],'screen']];
+  const parts=[['panel',[-.731,.731,-.0355,.0355,.07,.912],'black'],['screen',[-.725,.725,.035,.036,.076,.906],'screen']];
   for(const [side,sx] of [['left',-1],['right',1]]){
     parts.push([`foot-${side}`,[sx*.5275-.06,sx*.5275+.06,-.167,.167,0,.012],'black']);
-    parts.push([`neck-${side}`,[sx*.5275-.025,sx*.5275+.025,-.115,-.055,.012,.07],'black']);
+    parts.push([`neck-${side}`,[sx*.5275-.025,sx*.5275+.025,-.03,.03,.012,.07],'black']);
   }
   return parts;
 }
