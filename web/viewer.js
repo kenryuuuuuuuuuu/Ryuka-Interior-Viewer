@@ -2,7 +2,8 @@
 //
 // - 編集・保存・UE操作のスクリプト（web/editor-shell.js・web/local-app.js）は閲覧版に入れない。
 //   本体に残る編集用の部品は web/viewer.css で隠す（ボタンが無いので編集モードには入れない）。
-// - 左のメニューに、仕上げの案の切り替え・仕様一覧・部屋を選んで内覧、を足す（ショールームでスマホから見る用途）。
+// - 左のメニューに、仕上げの案の切り替え（自宅の案・民泊の案を別々に）・仕様一覧・部屋を選んで内覧、を足す
+//   （ショールームでスマホから見る用途）。
 // - web/finishes.js が使う確認窓（RyukaLocalApp.dialog）の代わりを用意する（閲覧版では仕様一覧だけが使う）。
 (function(){
 'use strict';
@@ -43,25 +44,30 @@ if(topBar) topBar.appendChild(el('span', {id: 'vwBadge', title: '編集・保存
 const ui = document.getElementById('ui');
 const finishes = window.RyukaFinishes;
 if(ui && finishes){
-  const schemeSelect = el('select', {id: 'vwScheme', 'aria-label': '仕上げの案',
-    onchange: e=>{ const d = finishes.getDoc(); d.activeScheme = e.target.value; finishes.setDoc(d); }});
+  // 自宅の案・民泊の案を別々の選択欄に（案の名前は区分ごとの一覧。先頭がいちばん有力な案）
+  const schemeSelects = FINISH_ZONES.map(zone=>el('select', {id: 'vwScheme-' + zone, 'data-zone': zone, 'aria-label': FINISH_ZONE_LABELS[zone] + 'の案',
+    onchange: e=>{ const d = finishes.getDoc(); d.activeSchemes = {...d.activeSchemes, [zone]: e.target.value}; finishes.setDoc(d); }}));
   const fillSchemes = ()=>{
     const d = finishes.getDoc();
-    schemeSelect.replaceChildren(...d.schemes.map(s=>el('option', {value: s.id, selected: s.id === d.activeScheme}, s.name)));
+    for(const select of schemeSelects){
+      const zone = select.dataset.zone;
+      select.replaceChildren(...d.schemes.filter(s=>s.zone === zone).map(s=>el('option', {value: s.id, selected: s.id === d.activeSchemes[zone]}, s.name)));
+    }
   };
   fillSchemes();
   const roomSelect = el('select', {id: 'vwRoom', 'aria-label': '部屋を選んで内覧'},
     el('option', {value: ''}, '部屋を選ぶ…'),
-    [1, 2].map(level=>el('optgroup', {label: `${level}F`},
-      (ROOMS_APPROX[level] || []).filter(r=>r.id).map(r=>el('option', {value: r.id}, r.name)))));
+    // 自宅（1F・2F）と民泊に分けて並べる（案の選択欄と同じ区分）
+    [['自宅 1F', 'home', 1], ['自宅 2F', 'home', 2], ['民泊', 'guest', 1]].map(([label, zone, level])=>el('optgroup', {label},
+      (ROOMS_APPROX[level] || []).filter(r=>r.id && (r.zone || 'home') === zone).map(r=>el('option', {value: r.id}, r.name)))));
   const walk = ()=>{ if(roomSelect.value) finishes.walkIntoRoom(roomSelect.value); };
   const section = el('div', {id: 'vwSection'},
     el('div', {class: 'section-title'}, '内装の案'),
-    schemeSelect,
+    schemeSelects.flatMap(select=>[el('label', {class: 'vw-zone', for: select.id}, FINISH_ZONE_LABELS[select.dataset.zone] + 'の案'), select]),
     el('div', {class: 'vw-row'}, el('button', {id: 'vwSpec', onclick: ()=>finishes.showSpecList()}, '📋 仕様一覧')),
     el('div', {class: 'section-title'}, '部屋を選んで内覧'),
     el('div', {class: 'vw-row'}, roomSelect, el('button', {id: 'vwWalk', onclick: walk}, '🚶 入る')),
-    el('div', {class: 'sub'}, '内覧の上部の選択欄でも案を切り替えられます。画面の色は目安です。'));
+    el('div', {class: 'sub'}, '自宅と民泊の案は別々に選べます（PCでは、内覧の上部の選択欄でも、今いる部屋の側の案を切り替えられます）。画面の色は目安です。'));
   const title = ui.querySelector('h1');
   if(title) title.textContent = 'Ryuka 内装ビューア';
   (title ? title.after.bind(title) : ui.prepend.bind(ui))(section);

@@ -163,8 +163,10 @@ globalThis.RyukaProducts = {settings: productSettings, draw: drawProduct, partsF
 if(typeof globalThis.productOptionsFor !== 'function'){
   globalThis.productOptionsFor = function(furnitureId){
     const doc = typeof FINISHES_DOC !== 'undefined' ? FINISHES_DOC : null;
-    const scheme = doc && doc.schemes.find(s=>s.id === doc.activeScheme);
-    return (scheme && scheme.productOptions && scheme.productOptions[furnitureId]) || {};
+    // 表示中の自宅の案・民泊の案のうち、この家具の選択を持つ案（web/finishes-core.js はこの後に読み込まれるので、ここで直接引く）
+    const shown = doc ? Object.values(doc.activeSchemes || {}).map(id=>doc.schemes.find(s=>s.id === id)).filter(Boolean) : [];
+    const scheme = shown.find(s=>s.productOptions && s.productOptions[furnitureId]);
+    return (scheme && scheme.productOptions[furnitureId]) || {};
   };
 }
 })();

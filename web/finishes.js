@@ -1,25 +1,29 @@
 // 内装の仕上げ（2026-10 UI整理・段階3a）：床・壁・天井の色をブラウザで選び、内覧で確かめる。
 //
 // - 正本は data/finishes.json（generated/house-data.js の FINISHES_DOC）。画面での変更は下書きとして
-//   localStorage（ryuka-finishes-draft-v1）に置き、［保存］（web/local-app.js）で正本へ反映する。
+//   localStorage（ryuka-finishes-draft-v2）に置き、［保存］（web/local-app.js）で正本へ反映する。
 // - 表示は内覧（一人称）の部屋の内側だけ：既存の壁・天井・床の上に、部屋ごとの薄い「仕上げの面」を
 //   重ねる（壁は窓を切り欠き、勾配天井の部屋は天井なりの高さにする）。壁の本体は2部屋で共有のため、
 //   色を変えると反対側の部屋まで変わらないよう、面は部屋の内側に別に置く。
+// - 案は自宅の案（zone: home）と民泊の案（zone: guest）に分かれ、表示中の案も区分ごとに1つ（2026-11-10）。
+//   編集は選んだ部屋の区分の案に書く。内覧の上部の「案」切替は、今いる部屋の区分の案だけを出す。
 // - 編集ドックの「仕上げ」タブ（web/editor-shell.js）と、内覧の上部の「案」切替をここで作る。
 // 解決の規則は web/finishes-core.js（Pythonの scripts/finishes.py と同じ）。
 (function(){
 'use strict';
 
-const DRAFT_KEY = 'ryuka-finishes-draft-v1';
-const EMPTY_DOC = {schemaVersion: '1.0.0', note: '', candidates: [],
-  schemes: [{id: 'scheme-a', name: '案A', assignments: {}, surfaces: {}}], activeScheme: 'scheme-a'};
+const DRAFT_KEY = 'ryuka-finishes-draft-v2';
+try{ localStorage.removeItem('ryuka-finishes-draft-v1'); }catch(e){}   // 家全体で1つの案だった頃の下書き（形が違うので使えない）
+const EMPTY_DOC = {schemaVersion: '2.0.0', note: '', candidates: [],
+  schemes: [{id: 'home-a', name: '標準', zone: 'home', assignments: {}, surfaces: {}},
+    {id: 'guest-a', name: '標準', zone: 'guest', assignments: {}, surfaces: {}}], activeSchemes: {home: 'home-a', guest: 'guest-a'}};
 const SOURCE = FINISHES_DOC || EMPTY_DOC;
 const clone = v=>JSON.parse(JSON.stringify(v));
 
 let doc = (()=>{
   try{
     const saved = JSON.parse(localStorage.getItem(DRAFT_KEY) || 'null');
-    if(saved && saved.schemaVersion === '1.0.0' && Array.isArray(saved.candidates) && Array.isArray(saved.schemes)) return saved;
+    if(saved && saved.schemaVersion === '2.0.0' && Array.isArray(saved.candidates) && Array.isArray(saved.schemes)) return saved;
   }catch(e){}
   return clone(SOURCE);
 })();
@@ -40,7 +44,7 @@ function commit(){ saveFinishesDraft(); render(); refreshProducts(); refreshFurn
 const optionItems = (typeof PRODUCT_PARTS === 'undefined' ? [] : FURNITURE_ITEMS)
   .map(item=>({item, product: FURNITURE_CATALOG[item.type] && PRODUCT_PARTS[FURNITURE_CATALOG[item.type].product]}))
   .filter(x=>x.product && Object.keys(x.product.options).length);
-window.productOptionsFor = id=>((scheme().productOptions || {})[id]) || {};
+window.productOptionsFor = id=>(finishesActiveScheme(doc).productOptions[id]) || {};
 let drawnOptions = null;
 function refreshProducts(){
   const now = JSON.stringify(optionItems.map(x=>productOptionsFor(x.item.id)));
@@ -50,7 +54,7 @@ function refreshProducts(){
   if(typeof selectedFurnitureId !== 'undefined' && optionItems.some(x=>x.item.id === selectedFurnitureId)) setSelectedFurniture(selectedFurnitureId);
 }
 function setProductOption(id, key, value, fallback){
-  const s = scheme();
+  const s = schemeForItem(id);
   const picks = {...((s.productOptions || {})[id] || {})};
   if(value === fallback) delete picks[key]; else picks[key] = value;
   s.productOptions = {...(s.productOptions || {}), [id]: picks};
@@ -75,7 +79,7 @@ function refreshFurnitureColors(){
 // 色を変えられる役割（家具の形と、付けた小物の役割。interior-white-model.html の furnitureColorRoles()）。ない家具は null
 const colorRolesOf = item=>{ const roles = furnitureColorRoles(item); return Object.keys(roles).length ? roles : null; };
 function setFurnitureColor(id, role, candidateId){
-  const s = scheme();
+  const s = schemeForItem(id);
   const roles = {...((s.furniture || {})[id] || {})};
   if(candidateId) roles[role] = candidateId; else delete roles[role];
   s.furniture = {...(s.furniture || {}), [id]: roles};
@@ -88,6 +92,16 @@ function setFurnitureColor(id, role, candidateId){
 const roomsById = {};
 for(const level of [1, 2]) for(const r of (ROOMS_APPROX[level] || [])) if(r.id) roomsById[r.id] = {...r, level};
 const roomName = id=>(roomsById[id] && roomsById[id].name) || id;
+
+// ---------- 自宅の案・民泊の案 ----------
+const zoneOfRoom = id=>(roomsById[id] && roomsById[id].zone) === 'guest' ? 'guest' : 'home';
+const schemesOf = zone=>doc.schemes.filter(s=>s.zone === zone);
+const schemeOfZone = zone=>doc.schemes.find(s=>s.id === (doc.activeSchemes || {})[zone]) || schemesOf(zone)[0];
+const schemeForRoom = roomId=>schemeOfZone(zoneOfRoom(roomId));
+function schemeForItem(furnitureId){   // 家具の案は、その家具がある部屋の区分の案
+  const item = activeFurnitureItems().find(i=>i.id === furnitureId);
+  return schemeForRoom(item && item.room);
+}
 
 function wallInfo(surface){
   // 壁の向き（H=東西に延びる／V=南北に延びる）、位置、範囲、部屋の内側の向き(+1/-1)、部屋から見た方角
@@ -286,7 +300,6 @@ const el = (tag, attrs, ...children)=>{
     node.appendChild(typeof c === 'string' ? document.createTextNode(c) : c);
   return node;
 };
-const scheme = ()=>doc.schemes.find(s=>s.id === doc.activeScheme) || doc.schemes[0];
 const candidateById = id=>doc.candidates.find(c=>c.id === id);
 const swatch = c=>el('span', {class: 'fin-swatch', style: c ? `background:#${c.colorHex}` : 'background:repeating-linear-gradient(45deg,#fff,#fff 3px,#e3e6e9 3px,#e3e6e9 6px)'});
 const candidateLabel = c=>c ? `${c.name}${c.status === 'provisional' ? '（仮）' : ''}${c.code ? ' ' + c.code : ''}` : '（標準のまま）';
@@ -300,7 +313,7 @@ function candidateSelect(parts, value, onChange, emptyLabel){
   return select;
 }
 function setAssignment(roomId, part, candidateId){
-  const s = scheme();
+  const s = schemeForRoom(roomId);
   s.assignments = s.assignments || {};
   const parts = {...(s.assignments[roomId] || {})};
   if(candidateId) parts[part] = candidateId; else delete parts[part];
@@ -308,31 +321,33 @@ function setAssignment(roomId, part, candidateId){
   commit();
 }
 function setAccent(surfaceId, candidateId){
-  const s = scheme();
+  const s = schemeForRoom((walls.find(w=>w.surface.id === surfaceId) || {surface: {}}).surface.roomId);
   s.surfaces = {...(s.surfaces || {})};
   if(candidateId) s.surfaces[surfaceId] = candidateId; else delete s.surfaces[surfaceId];
   commit();
 }
 
-async function editScheme(action){
-  const current = scheme();
+async function editScheme(action, zone){
+  const current = schemeOfZone(zone);
   if(action === 'copy'){
-    const id = 'scheme-' + Date.now().toString(36);
-    const letters = '案' + String.fromCharCode(65 + doc.schemes.length);
-    doc.schemes.push({...clone(current), id, name: doc.schemes.some(s=>s.name === letters) ? current.name + 'のコピー' : letters});
-    doc.activeScheme = id;
+    const id = zone + '-' + Date.now().toString(36);
+    let name = current.name + 'のコピー';
+    for(let n = 2; schemesOf(zone).some(s=>s.name === name); n++) name = `${current.name}のコピー${n}`;
+    const at = doc.schemes.indexOf(current) + 1;   // 元の案の次に置く
+    doc.schemes.splice(at, 0, {...clone(current), id, name});
+    doc.activeSchemes = {...doc.activeSchemes, [zone]: id};
   }else if(action === 'rename'){
     const input = el('input', {type: 'text', value: current.name, class: 'fin-input'});
     const v = await dialog('案の名前を変える', input, [{label: 'やめる', value: null}, {label: '変える', value: 'ok', kind: 'primary'}]);
     if(v !== 'ok' || !input.value.trim()) return;
     current.name = input.value.trim();
   }else if(action === 'delete'){
-    if(doc.schemes.length < 2){ await dialog('削除できません', el('p', null, '案が1つだけのときは削除できません。'), [{label: '閉じる', value: null, kind: 'primary'}]); return; }
-    const v = await dialog(`「${current.name}」を削除しますか？`, el('p', null, 'この案の割当がすべて消えます（保存前なら「元に戻す」で戻せます）。'),
+    if(schemesOf(zone).length < 2){ await dialog('削除できません', el('p', null, `${FINISH_ZONE_LABELS[zone]}の案が1つだけのときは削除できません。`), [{label: '閉じる', value: null, kind: 'primary'}]); return; }
+    const v = await dialog(`「${current.name}」を削除しますか？`, el('p', null, `この${FINISH_ZONE_LABELS[zone]}の案の割当がすべて消えます（保存前なら「元に戻す」で戻せます）。`),
       [{label: 'やめる', value: null}, {label: '削除する', value: 'ok', kind: 'danger'}]);
     if(v !== 'ok') return;
     doc.schemes = doc.schemes.filter(s=>s.id !== current.id);
-    doc.activeScheme = doc.schemes[0].id;
+    doc.activeSchemes = {...doc.activeSchemes, [zone]: schemesOf(zone)[0].id};
   }
   commit();
 }
@@ -402,26 +417,29 @@ async function editCandidate(existing){
 
 // 仕様一覧：全部屋を並べ、決まっていない部位は「未定」と出す（打ち合わせ前の確認表を兼ねる）
 function specList(){
-  const s = scheme();
-  const rooms = Object.values(roomsById).sort((a, b)=>a.level - b.level || a.name.localeCompare(b.name, 'ja'));
+  const rooms = Object.values(roomsById).sort((a, b)=>FINISH_ZONES.indexOf(zoneOfRoom(a.id)) - FINISH_ZONES.indexOf(zoneOfRoom(b.id))
+    || a.level - b.level || a.name.localeCompare(b.name, 'ja'));
   const cell = id=>{ const c = candidateById(id); return c ? `${c.name}${c.maker || c.code ? `（${[c.maker, c.code].filter(Boolean).join(' ')}）` : ''}${c.status === 'provisional' ? '〔仮〕' : ''}` : ''; };
-  let decided = 0, products = 0;
+  const decided = {home: 0, guest: 0}, total = {home: 0, guest: 0};
   const rows = rooms.map(room=>{
+    const s = schemeForRoom(room.id), zone = zoneOfRoom(room.id);
     const parts = (s.assignments || {})[room.id] || {};
     const used = FINISH_PARTS.map(p=>candidateById(parts[p]));
-    if(used.every(Boolean)){ decided++; if(used.every(c=>c.status === 'product')) products++; }
+    total[zone]++;
+    if(used.every(Boolean)) decided[zone]++;
     const accents = walls.filter(w=>w.surface.roomId === room.id && (s.surfaces || {})[w.surface.id])
       .map(w=>`${w.info.direction}の壁（${w.info.length.toFixed(2)}m）：${cell(s.surfaces[w.surface.id])}`);
-    return [`${room.level}F ${room.name}`, cell(parts.floor), cell(parts.wall), cell(parts.ceiling), accents.join('／')];
+    return [`${FINISH_ZONE_LABELS[zone]} ${room.level}F ${room.name}`, cell(parts.floor), cell(parts.wall), cell(parts.ceiling), accents.join('／')];
   });
   const equipment = optionItems.flatMap(({item, product})=>Object.entries(product.options).map(([key, o])=>
     `${item.label}・${o.label}：${o.choices[productOptionsFor(item.id)[key] ?? o.default].label}`));
   // 家具・布の色（この案で決めたもの）。部屋の順に「部屋 家具・部品：候補」
   const furniture = rooms.flatMap(room=>activeFurnitureItems().filter(item=>item.room === room.id && colorRolesOf(item))
-    .flatMap(item=>Object.entries(colorRolesOf(item)).filter(([role])=>((s.furniture || {})[item.id] || {})[role])
-      .map(([role, label])=>`${room.name} ${item.label}・${label}：${cell(s.furniture[item.id][role])}`)));
-  return {title: `内装仕上げ一覧（${s.name}）`, head: ['部屋', '床', '壁', '天井', 'アクセント壁'], rows, equipment, furniture,
-    summary: `床・壁・天井がすべて決まった部屋：${decided}／${rooms.length}（うち品番まで決まった部屋：${products}）`};
+    .flatMap(item=>{ const s = schemeForRoom(room.id); return Object.entries(colorRolesOf(item)).filter(([role])=>((s.furniture || {})[item.id] || {})[role])
+      .map(([role, label])=>`${room.name} ${item.label}・${label}：${cell(s.furniture[item.id][role])}`); }));
+  const label = FINISH_ZONES.map(z=>`${FINISH_ZONE_LABELS[z]}：${schemeOfZone(z).name}`).join('／');
+  return {title: `内装仕上げ一覧（${label}）`, head: ['部屋', '床', '壁', '天井', 'アクセント壁'], rows, equipment, furniture,
+    summary: FINISH_ZONES.map(z=>`${FINISH_ZONE_LABELS[z]}の床・壁・天井がすべて決まった部屋：${decided[z]}／${total[z]}`).join('　')};
 }
 const specText = (c, i)=>c || (i >= 1 && i <= 3 ? '未定' : '—');
 async function showSpecList(){
@@ -468,28 +486,30 @@ function walkIntoRoom(roomId){
 
 function refreshPanel(){
   if(!panel) return;
-  const s = scheme();
   if(!selectedRoom || !roomsById[selectedRoom]) selectedRoom = (typeof focusedRoomId !== 'undefined' && focusedRoomId) || 'room-1f-11';
+  const zone = zoneOfRoom(selectedRoom), s = schemeOfZone(zone);   // 編集は選んだ部屋の区分の案に書く
   const parts = (s.assignments || {})[selectedRoom] || {};
+  const roomItems = optionItems.filter(x=>x.item.room === selectedRoom);
   const roomWalls = walls.filter(w=>w.surface.roomId === selectedRoom);
   const roomFurniture = activeFurnitureItems().filter(item=>item.room === selectedRoom && colorRolesOf(item));
+  // 部屋は自宅（1F・2F）と民泊に分けて並べる。●はその区分の表示中の案で決まっている部屋
+  const roomGroups = [['自宅 1F', 'home', 1], ['自宅 2F', 'home', 2], ['民泊', 'guest', 1]];
   const roomSelect = el('select', {onchange: e=>{ selectedRoom = e.target.value; refreshPanel(); }},
-    [1, 2].map(level=>el('optgroup', {label: `${level}F`}, Object.values(roomsById).filter(r=>r.level === level)
-      .map(r=>el('option', {value: r.id, selected: r.id === selectedRoom}, r.name + (((s.assignments || {})[r.id]) ? ' ●' : ''))))));
-  panel.replaceChildren(...[
-    el('div', {class: 'ra-sub-title'}, '仕上げの案（表示中の案が内覧とUEに反映されます）'),
+    roomGroups.map(([label, z, level])=>el('optgroup', {label}, Object.values(roomsById).filter(r=>r.level === level && zoneOfRoom(r.id) === z)
+      .map(r=>el('option', {value: r.id, selected: r.id === selectedRoom}, r.name + (((schemeOfZone(z).assignments || {})[r.id]) ? ' ●' : ''))))));
+  const zoneRow = z=>el('div', {class: 'fin-zone' + (z === zone ? ' fin-zone-on' : '')},
+    el('div', {class: 'fin-zone-head'}, el('span', {class: 'fin-zone-name'}, FINISH_ZONE_LABELS[z] + 'の案'),
+      z === zone ? el('span', {class: 'fin-zone-badge'}, '選んだ部屋の案（編集中）') : null),
     el('div', {class: 'fin-row'},
-      el('select', {onchange: e=>{ doc.activeScheme = e.target.value; commit(); }},
-        doc.schemes.map(x=>el('option', {value: x.id, selected: x.id === s.id}, x.name))),
-      el('button', {title: '今の案を複製して新しい案を作る', onclick: ()=>editScheme('copy')}, '複製'),
-      el('button', {title: '名前を変える', onclick: ()=>editScheme('rename')}, '名前'),
-      el('button', {title: 'この案を削除', onclick: ()=>editScheme('delete')}, '削除')),
-    optionItems.length ? el('div', {class: 'ra-sub-title'}, '設備（この案）') : null,
-    optionItems.flatMap(({item, product})=>Object.entries(product.options).map(([key, o])=>el('label', {class: 'fin-option'},
-      el('span', null, `${item.label}・${o.label}`),
-      el('select', {onchange: e=>setProductOption(item.id, key, e.target.value, o.default)},
-        Object.entries(o.choices).map(([c, cv])=>el('option', {value: c, selected: (productOptionsFor(item.id)[key] ?? o.default) === c}, cv.label)))))),
-    el('div', {class: 'ra-sub-title'}, '部屋'),
+      el('select', {'aria-label': FINISH_ZONE_LABELS[z] + 'の案', onchange: e=>{ doc.activeSchemes = {...doc.activeSchemes, [z]: e.target.value}; commit(); }},
+        schemesOf(z).map(x=>el('option', {value: x.id, selected: x.id === schemeOfZone(z).id}, x.name))),
+      el('button', {title: '今の案を複製して新しい案を作る', onclick: ()=>editScheme('copy', z)}, '複製'),
+      el('button', {title: '名前を変える', onclick: ()=>editScheme('rename', z)}, '名前'),
+      el('button', {title: 'この案を削除', onclick: ()=>editScheme('delete', z)}, '削除')));
+  panel.replaceChildren(...[
+    el('div', {class: 'ra-sub-title'}, '表示中の案（内覧とUEに反映されます。自宅と民泊は別々に選べます）'),
+    FINISH_ZONES.map(zoneRow),
+    el('div', {class: 'ra-sub-title'}, `部屋（${FINISH_ZONE_LABELS[zone]}の案「${s.name}」に書き込みます）`),
     roomSelect,
     FINISH_PARTS.map(part=>el('div', {class: 'fin-part'},
       el('span', {class: 'fin-part-label'}, FINISH_PART_LABELS[part]),
@@ -512,6 +532,12 @@ function refreshPanel(){
             el('option', {value: ''}, '（標準のまま）'),
             doc.candidates.filter(c=>c.kind === 'furniture').map(c=>el('option', {value: c.id, selected: c.id === picked}, candidateLabel(c)))));
       }))) : null,
+    // 設備（採用品の選択肢：キッチン・カップボードの扉の色など）は、選んだ部屋にあるものだけ
+    roomItems.length ? el('div', {class: 'ra-sub-title'}, '設備（この部屋）') : null,
+    roomItems.flatMap(({item, product})=>Object.entries(product.options).map(([key, o])=>el('label', {class: 'fin-option'},
+      el('span', null, `${item.label}・${o.label}`),
+      el('select', {onchange: e=>setProductOption(item.id, key, e.target.value, o.default)},
+        Object.entries(o.choices).map(([c, cv])=>el('option', {value: c, selected: (productOptionsFor(item.id)[key] ?? o.default) === c}, cv.label)))))),
     el('div', {class: 'fin-actions'},
       el('button', {class: 'primary', onclick: ()=>walkIntoRoom(selectedRoom)}, '🚶 この部屋を内覧で見る'),
       el('button', {onclick: showSpecList}, '📋 仕様一覧')),
@@ -535,16 +561,26 @@ setInterval(()=>{
   if(!here || here.id === walkerRoom) return;
   walkerRoom = here.id;
   if(selectedRoom !== here.id){ selectedRoom = here.id; refreshPanel(); }
+  refreshWalkHud();   // 内覧の上部の案の切替は、今いる部屋の区分（自宅／民泊）の案に切り替わる
 }, 400);
 
 // ---------- 内覧中の「案」切替（ブラウザで切り替えて見比べる） ----------
-const hudSelect = el('select', {id: 'walkSchemeSelect', title: '仕上げの案を切り替えて見比べる',
-  onchange: e=>{ doc.activeScheme = e.target.value; commit(); }});
+let hudZone = 'home';   // 今いる部屋の区分（部屋の外では、最後にいた区分のまま）
+const hudLabel = el('span', {id: 'walkSchemeZone'});
+const hudSelect = el('select', {id: 'walkSchemeSelect', title: '仕上げの案を切り替えて見比べる（今いる部屋の側の案）',
+  onchange: e=>{ doc.activeSchemes = {...doc.activeSchemes, [hudZone]: e.target.value}; commit(); }});
 function refreshWalkHud(){
-  hudSelect.replaceChildren(...doc.schemes.map(s=>el('option', {value: s.id, selected: s.id === doc.activeScheme}, '仕上げ：' + s.name)));
-  hudSelect.hidden = doc.schemes.length < 2;
+  if(walkerRoom) hudZone = zoneOfRoom(walkerRoom);
+  const options = schemesOf(hudZone).map(s=>el('option', {value: s.id, selected: s.id === schemeOfZone(hudZone).id}, s.name));
+  const now = options.map(o=>o.value + (o.selected ? '*' : '') + o.textContent).join('|');
+  if(hudSelect.dataset.shown !== hudZone + '/' + now){   // 変わったときだけ作り直す（内覧中に開いた選択欄を閉じないため）
+    hudSelect.dataset.shown = hudZone + '/' + now;
+    hudSelect.replaceChildren(...options);
+    hudLabel.textContent = FINISH_ZONE_LABELS[hudZone] + 'の案';
+  }
+  hudSelect.hidden = hudLabel.hidden = schemesOf(hudZone).length < 2;
 }
-document.getElementById('walkExit').before(hudSelect);
+document.getElementById('walkExit').before(hudLabel, hudSelect);
 
 refreshWalkHud();
 render();

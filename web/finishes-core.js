@@ -4,9 +4,24 @@
 const FINISH_PARTS = ['floor', 'wall', 'ceiling'];
 const FINISH_CANDIDATE_PARTS = {floor: ['floor'], cloth: ['wall', 'ceiling'], furniture: []};
 const FINISH_PART_LABELS = {floor: '床', wall: '壁', ceiling: '天井'};
+// 案は自宅の案（zone: home）と民泊の案（zone: guest）に分かれる（2026-11-10）。表示中の案は区分ごとに1つ（activeSchemes）
+const FINISH_ZONES = ['home', 'guest'];
+const FINISH_ZONE_LABELS = {home: '自宅', guest: '民泊'};
+
+// 表示中の自宅の案と民泊の案を1つにまとめた案（scripts/finishes.py の active_scheme() と同じ。
+// 案は自分の区分の分だけを持つので、割当・面・家具の色・設備の選択は重ならない）
+function finishesActiveScheme(doc){
+  const merged = {id: 'active', name: '表示中の案', assignments: {}, surfaces: {}, furniture: {}, productOptions: {}};
+  for(const zone of FINISH_ZONES){
+    const scheme = doc.schemes.find(s=>s.id === (doc.activeSchemes || {})[zone]);
+    if(scheme) for(const key of Object.keys(merged).filter(k=>typeof merged[k] === 'object')) Object.assign(merged[key], scheme[key] || {});
+  }
+  return merged;
+}
+const finishesSchemeOf = (doc, schemeId)=>schemeId ? doc.schemes.find(s=>s.id === schemeId) : finishesActiveScheme(doc);
 
 function finishesResolve(doc, registry, schemeId){
-  const scheme = doc.schemes.find(s=>s.id === (schemeId || doc.activeScheme));
+  const scheme = finishesSchemeOf(doc, schemeId);
   if(!scheme) return {};
   const candidates = Object.fromEntries(doc.candidates.map(c=>[c.id, c]));
   const result = {};
@@ -21,7 +36,7 @@ function finishesResolve(doc, registry, schemeId){
 // 家具・布の色：{家具id: {役割: 候補}}（scripts/finishes.py の furniture_colors() と同じ。
 // 今ない家具・その形で変えられない役割は、描くとき（applyFurnitureColors）に除く）
 function finishesFurnitureColors(doc, schemeId){
-  const scheme = doc.schemes.find(s=>s.id === (schemeId || doc.activeScheme));
+  const scheme = finishesSchemeOf(doc, schemeId);
   if(!scheme) return {};
   const candidates = Object.fromEntries(doc.candidates.map(c=>[c.id, c]));
   const result = {};
@@ -35,7 +50,7 @@ function finishesFurnitureColors(doc, schemeId){
 // 正本と比べて変わった項目の数（保存ボタン・編集ドックの件数表示用）
 function finishesChangeCount(source, draft){
   if(!draft) return 0;
-  source = source || {candidates: [], schemes: [], activeScheme: null};
+  source = source || {candidates: [], schemes: [], activeSchemes: {}};
   let n = 0;
   const key = c=>JSON.stringify(c);
   const sc = Object.fromEntries(source.candidates.map(c=>[c.id, key(c)]));
@@ -63,6 +78,6 @@ function finishesChangeCount(source, draft){
       for(const r of new Set([...Object.keys(fo[f] || {}), ...Object.keys(fd[f] || {})]))
         if((fo[f] || {})[r] !== (fd[f] || {})[r]) n++;
   }
-  if(source.activeScheme !== draft.activeScheme) n++;
+  for(const zone of FINISH_ZONES) if((source.activeSchemes || {})[zone] !== (draft.activeSchemes || {})[zone]) n++;
   return n;
 }

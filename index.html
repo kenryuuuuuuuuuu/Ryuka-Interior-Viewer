@@ -365,7 +365,18 @@
 .fin-spec-wrap{max-height:52vh;overflow:auto;}
 .fin-spec-summary{font-size:12px;font-weight:600;margin:0 0 8px;}
 
-/* 内覧の上部：仕上げの案の切替 */
+/* 編集ドック：自宅の案・民泊の案（選んだ部屋の側を目立たせる） */
+#electricalDock .fin-zone{display:flex;flex-direction:column;gap:4px;padding:6px 8px;border:1.5px solid var(--line);border-radius:9px;}
+#electricalDock .fin-zone .fin-row{flex-wrap:wrap;}
+#electricalDock .fin-zone .fin-row select{flex:1 1 100%;}
+#electricalDock .fin-zone .fin-row button{flex:1 1 auto;}
+#electricalDock .fin-zone-on{border-color:var(--accent);background:#f4f8fc;}
+#electricalDock .fin-zone-head{display:flex;align-items:center;gap:6px;font-size:12px;font-weight:600;color:#4a5158;}
+#electricalDock .fin-zone-badge{font-size:10.5px;font-weight:500;color:var(--accent);}
+
+/* 内覧の上部：仕上げの案の切替（今いる部屋の側の案だけ。ラベルで自宅／民泊を示す） */
+#walkHud #walkSchemeZone{font-size:11px;font-weight:600;color:#fff;opacity:.85;white-space:nowrap;}
+#walkHud #walkSchemeZone[hidden]{display:none;}
 #walkHud #walkSchemeSelect{border:none;border-radius:8px;padding:7px 8px;font-size:12px;background:#fff;color:#222b32;
     font-family:inherit;cursor:pointer;}
 #walkHud #walkSchemeSelect[hidden]{display:none;}
@@ -388,6 +399,7 @@ body{background:#dfe3e7}
 #vwBadge small{font-weight:500;color:#6b7480}
 #vwSection{display:flex;flex-direction:column;gap:6px;margin-bottom:6px}
 #vwSection select{width:100%;border:1.5px solid #e4e7ea;border-radius:8px;padding:7px 8px;font-size:13px;background:#fff;color:#222b32}
+#vwSection .vw-zone{font-size:11.5px;font-weight:600;color:#4a5158;margin:2px 0 -3px}
 #vwSection .vw-row{display:flex;gap:6px}
 #vwSection .vw-row select{flex:1;min-width:0}
 #vwSection button{border:1.5px solid #e4e7ea;background:#f2f4f6;border-radius:8px;padding:7px 10px;font-size:13px;
@@ -397,7 +409,7 @@ body{background:#dfe3e7}
 /* スマホ幅：内覧の上部を「三人称に切替」「終了」だけにして、視界をあける（2026-11-08 施主指示） */
 #vwRoll{display:none}
 @media (max-width:640px){
-  #walkHud .room,#walkSwitchSpawn,#walkSchemeSelect,#walkRollToggle{display:none!important}
+  #walkHud .room,#walkSwitchSpawn,#walkSchemeSelect,#walkSchemeZone,#walkRollToggle{display:none!important}
   #walkHud{padding:6px 8px}
   body.vw-walk #vwBadge{display:none}
   /* ロールスクリーンの上げ下げは、スクリーンのある部屋に入ったときだけ（web/viewer.js）。ジョイスティックの上、ミニマップの左 */
