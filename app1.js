@@ -1576,6 +1576,24 @@ function drawMarEa(g,w,d,h,finish){
   const cap=new THREE.Mesh(new THREE.CylinderGeometry(P.capRadius,P.capRadius,P.capThickness,48),marEaMat('cap-'+cfg.legs,()=>new THREE.MeshStandardMaterial({color:'#'+P.finishes.legs[cfg.legs].color,roughness:.5})));
   cap.position.y=legH+P.capThickness/2; cap.name='leg-cap'; g.add(cap);
 }
+// ---- ローテーブル HOMESIC LOTUS（2026-11-09 購入・確定。W700 D700 H300、ファイバーセメント）----
+// 形の定義は data/products/homesic-lotus.json（LOTUS_PROFILE）：薄い天板の円盤と、断面（body：縁から床まで）を一周回した胴。
+// 天板と胴を別の部品にして、縁の角を立てる。blender/lotus_assets.py と同じ。寸法は固定
+function lotusCheck(w,d,h){
+  const D=LOTUS_PROFILE.dimensions;
+  if([w,d,h].some((v,i)=>!Number.isFinite(v)||Math.abs(v-D[i])>1e-7)) throw Error('ローテーブルLOTUSは幅0.70・奥行0.70・高さ0.30m専用です');
+}
+function drawLotus(g,w,d,h){
+  lotusCheck(w,d,h);
+  const P=LOTUS_PROFILE, r=w/2, t=P.topThickness;
+  // 展示品の表面はむらの少ないつや消し（斑点の模様は付けない）
+  const cement=marEaMat('lotus-cement',()=>new THREE.MeshStandardMaterial({color:'#'+P.color,roughness:P.roughness}));
+  const seam=marEaMat('lotus-seam',()=>new THREE.MeshStandardMaterial({color:'#'+P.seamColor,roughness:P.roughness}));
+  const top=new THREE.Mesh(new THREE.CylinderGeometry(r,r,t,P.segments),[seam,cement,cement]);   // 側面（天板と胴の継ぎ目の細い線）・上面・下面
+  top.position.y=h-t/2; top.name='top'; g.add(top);
+  const body=new THREE.Mesh(new THREE.LatheGeometry(P.body.map(([pr,py])=>new THREE.Vector2(pr,py)).reverse(),P.segments),cement);
+  body.name='body'; g.add(body);
+}
 // 展示されていた椅子（緑のブークレ張りの背と座、ミント色のスチール脚）。+zが正面。blender/marea_assets.py の chair_parts() と同じ形
 const CHAIR_BOUCLE='3b5f52', CHAIR_MINT='9cc7ba';
 let chairBoucleMap=null;
@@ -1874,6 +1892,7 @@ const FURNITURE_SHAPES = {
   builtInDesk(g,w,d,h){ addPartBoxes(g,builtInDeskParts(w,d,h)); },
   taskChair(g,w,d,h){ addPartBoxes(g,taskChairParts(w,d,h)); },
   armChair(g,w,d,h){ addPartBoxes(g,armChairParts(w,d,h),ARM_CHAIR_MATS); },
+  lotusTable(g,w,d,h){ drawLotus(g,w,d,h); },
   // 採用品（web/products.js）：部品は data/products/*.json から。案の選択肢で見た目が変わる
   product(g,w,d,h,o){RyukaProducts.draw(g,o.product,w,d,h,o.finish,o.options,o.yaw);},
   closetSingle(g,w,d,h,o){drawStorage(g,'closetSingle',w,d,h,o);},
