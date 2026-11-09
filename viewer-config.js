@@ -1,2 +1,2 @@
 // 閲覧版の印（scripts/build-viewer.mjs が書く）。web/viewer.js と web/finishes.js が見る。
-window.RYUKA_VIEWER = {"builtAt":"2026-11-08版","commit":"5879105"};
+window.RYUKA_VIEWER = {"builtAt":"2026-11-09版","commit":"b0d7492"};

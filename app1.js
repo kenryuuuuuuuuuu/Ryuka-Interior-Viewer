@@ -1621,12 +1621,43 @@ function taskChairParts(w,d,h){
     ['arm-left',[-.29,-.25,-.12,.15,.62,.65],'frame'],['arm-right',[.25,.29,-.12,.15,.62,.65],'frame'],
     ['arm-post-left',[-.28,-.26,-.01,.02,.5,.62],'frame'],['arm-post-right',[.26,.28,-.01,.02,.5,.62],'frame']];
 }
+// ---- 購入したダイニングチェア：木のアームチェア（2026-11-09。写真2枚と寸法 W560 D537 H745 SH440 から）----
+// 背が背中を包んで肘掛けにつながる曲面の背、先細りの丸い4本脚、黒い合皮の座。寸法は固定。+zが正面。
+// 部品は blender/furniture_assets.py の arm_chair_parts() と同じ（tests/test_arm_chair.py が突き合わせる）。
+// 部品は [名前,[x0,x1,z0,z1,y0,y1],材質,円柱か,平面の多角形（曲面の背だけ）]
+const ARM_CHAIR={width:.56,depth:.537,height:.745,seat:.44,wood:0x8a5a37,seatColor:0x2b2a2d};
+function armChairParts(w,d,h){
+  if([w,d,h].some((v,i)=>!Number.isFinite(v)||Math.abs(v-[ARM_CHAIR.width,ARM_CHAIR.depth,ARM_CHAIR.height][i])>1e-7)) throw Error('このダイニングチェアは幅0.56・奥行0.537・高さ0.745m専用です');
+  const zb=-d/2, zf=d/2, steps=12, xs=Array.from({length:steps+1},(_,i)=>-.255+.51*i/steps), curve=x=>zb+.07*Math.pow(x/.255,2);
+  const band=[...xs.map(x=>[x,curve(x)]), ...[...xs].reverse().map(x=>[x,curve(x)+.045])];
+  const parts=[
+    ['seat',[-.235,.235,-.2,zf,.39,.44],'seat'],
+    ['seat-frame',[-.245,.245,-.225,.25,.35,.39],'wood'],
+    ['back',[-.255,.255,zb,zb+.07+.045,.6,h],'wood',false,band],
+    ['arm-left',[-.28,-.225,-.215,.21,.62,.66],'wood'],['arm-right',[.225,.28,-.215,.21,.62,.66],'wood']];
+  for(const [side,x] of [['left',-1],['right',1]]){
+    parts.push([`leg-front-${side}`,[x*.235-.02,x*.235+.02,.19,.23,0,.62],'wood',true]);
+    parts.push([`leg-rear-${side}`,[x*.21-.02,x*.21+.02,-.255,-.215,0,.6],'wood',true]);
+  }
+  return parts;
+}
 const STUDY_MATS={wood:()=>FMAT.wood, frame:()=>FMAT.dark, fabric:()=>marEaMat('task-chair-fabric',()=>new THREE.MeshStandardMaterial({color:0xb9b7b2,roughness:.85}))};
-function addPartBoxes(g,parts){
-  for(const [name,b,m,cyl] of parts){
-    const mesh=fPart(g,b[1]-b[0],b[5]-b[4],b[3]-b[2],(b[0]+b[1])/2,b[4],(b[2]+b[3])/2,STUDY_MATS[m](),cyl);
+const ARM_CHAIR_MATS={wood:()=>marEaMat('arm-chair-wood',()=>new THREE.MeshStandardMaterial({color:ARM_CHAIR.wood,roughness:.55})),
+  seat:()=>marEaMat('arm-chair-seat',()=>new THREE.MeshStandardMaterial({color:ARM_CHAIR.seatColor,roughness:.5}))};
+function addPartBoxes(g,parts,mats=STUDY_MATS){
+  for(const [name,b,m,cyl,polygon] of parts){
+    if(polygon){   // 平面の多角形を高さ方向へ押し出す（drawShellChair の背と同じ向き）
+      const shape=new THREE.Shape();
+      polygon.forEach(([x,z],i)=>i?shape.lineTo(x,-z):shape.moveTo(x,-z));
+      shape.closePath();
+      const geo=new THREE.ExtrudeGeometry(shape,{depth:b[5]-b[4],bevelEnabled:false,steps:1});
+      geo.rotateX(-Math.PI/2); geo.translate(0,b[4],0);
+      const mesh=new THREE.Mesh(geo,mats[m]()); mesh.name=name; mesh.castShadow=true; mesh.receiveShadow=true; g.add(mesh);
+      continue;
+    }
+    const mesh=fPart(g,b[1]-b[0],b[5]-b[4],b[3]-b[2],(b[0]+b[1])/2,b[4],(b[2]+b[3])/2,mats[m](),cyl);
     mesh.name=name;
-    if(m==='wood') colorRole(mesh,'wood');
+    if(m==='wood' && mats===STUDY_MATS) colorRole(mesh,'wood');
   }
 }
 // ---- ソファ WQ19CR（展示品の候補、片肘のカウチ。2026-11-07）----
@@ -1842,6 +1873,7 @@ const FURNITURE_SHAPES = {
   // 2026-11-07 造作のデスク・低い台と、ワーキングチェア（仮）。blender/furniture_assets.py の built_in_desk_parts()／task_chair_parts() と同じ
   builtInDesk(g,w,d,h){ addPartBoxes(g,builtInDeskParts(w,d,h)); },
   taskChair(g,w,d,h){ addPartBoxes(g,taskChairParts(w,d,h)); },
+  armChair(g,w,d,h){ addPartBoxes(g,armChairParts(w,d,h),ARM_CHAIR_MATS); },
   // 採用品（web/products.js）：部品は data/products/*.json から。案の選択肢で見た目が変わる
   product(g,w,d,h,o){RyukaProducts.draw(g,o.product,w,d,h,o.finish,o.options,o.yaw);},
   closetSingle(g,w,d,h,o){drawStorage(g,'closetSingle',w,d,h,o);},
@@ -2194,7 +2226,7 @@ function updateFurniturePanel(){
   document.getElementById('fpProductParts').style.display=isParts?'':'none';
   document.getElementById('fpMarEa').style.display=isMarEa?'':'none';
   document.getElementById('fpWq19').style.display=isWq19?'':'none';
-  for(const id of ['fpWidth','fpDepth','fpHeight']) document.getElementById(id).disabled=isProduct||isParts||isMarEa||isWq19;
+  for(const id of ['fpWidth','fpDepth','fpHeight']) document.getElementById(id).disabled=isProduct||isParts||isMarEa||isWq19||!!base.purchased;
   if(isWq19){const cfg=wq19Settings(eff.width,eff.depth,eff.height,eff.productFinish);document.getElementById('fpWqFrame').value=cfg.frame;document.getElementById('fpWqFabric').value=cfg.fabric;}
   if(isMarEa){const cfg=marEaSettings(eff.width,eff.depth,eff.height,eff.productFinish);document.getElementById('fpMarSize').value=String(Math.round(eff.width*100));document.getElementById('fpMarTop').value=cfg.top;document.getElementById('fpMarLegs').value=cfg.legs;}
   // 購入して確定した商品は、色・サイズの選択欄を使えなくする（位置と向きは動かせる）
