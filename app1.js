@@ -1683,6 +1683,28 @@ function bravia65Parts(w,d,h){
   }
   return parts;
 }
+// ---- 民泊LDKのダイニング用ソファ HOMESIC 2.5P Sofa TOT（W1800 D900 H580 SH320、スチール＋ファブリック。2026-11-10 確定）----
+// デイベッドに近い形：厚い一枚の座面（背の側は奥行き0.20mが背の箱）、後ろ側の約1.05mだけの箱形の背（前面にボタン2つ）、
+// 背のない側の端に斜めに置いたグレーの細長いクッション、黒いスチールの枠と脚。背は座った人から見て左（+x側。展示品と同じ）。+zが正面。
+// 部品は blender/furniture_assets.py の tot_sofa_parts() と同じ（tests/test_tot_sofa.py が突き合わせる）。寸法は固定
+const TOT_SOFA={width:1.8,depth:.9,height:.58,seat:.32,frame:0x1c1c1e,seatColor:0xd8d2c2,back:0x3b383a,bolster:0x76726f,button:0xe3dac6};
+function totSofaParts(w,d,h){
+  if([w,d,h].some((v,i)=>!Number.isFinite(v)||Math.abs(v-[TOT_SOFA.width,TOT_SOFA.depth,TOT_SOFA.height][i])>1e-7)) throw Error('このソファは幅1.8・奥行0.9・高さ0.58m専用です');
+  const rnd=v=>Math.round(v*1e4)/1e4, a=55*Math.PI/180, c=[-.56,-.1], hl=.275, hw=.085;
+  const dir=[Math.cos(a),-Math.sin(a)], perp=[Math.sin(a),Math.cos(a)];
+  const bolster=[[1,1],[1,-1],[-1,-1],[-1,1]].map(([s,r])=>[rnd(c[0]+s*hl*dir[0]+r*hw*perp[0]),rnd(c[1]+s*hl*dir[1]+r*hw*perp[1])]);
+  const parts=[
+    ['frame-front',[-.88,.88,.405,.43,.1,.15],'frame'],['frame-back',[-.88,.88,-.43,-.405,.1,.15],'frame'],
+    ['frame-left',[-.88,-.855,-.405,.405,.1,.15],'frame'],['frame-right',[.855,.88,-.405,.405,.1,.15],'frame']];
+  for(const [sx,sz] of [[-1,-1],[-1,1],[1,-1],[1,1]]) parts.push([`leg-${sx<0?'left':'right'}-${sz<0?'rear':'front'}`,[sx*.78-.02,sx*.78+.02,sz*.35-.02,sz*.35+.02,0,.1],'frame',true]);
+  parts.push(['seat',[-.9,.9,-.45,.45,.15,.32],'seat',false,[[-.9,-.45],[-.15,-.45],[-.15,-.25],[.9,-.25],[.9,.45],[-.9,.45]]]);
+  parts.push(['back',[-.15,.9,-.45,-.25,.15,.58],'back']);
+  for(const [name,x] of [['button-left',.155],['button-right',.595]]) parts.push([name,[x-.016,x+.016,-.25,-.238,.4,.432],'button']);
+  parts.push(['bolster',[-.9,.9,-.45,.45,.32,.45],'bolster',false,bolster]);
+  return parts;
+}
+const TOT_MATS=Object.fromEntries([['frame',.5],['seat',.9],['back',.9],['bolster',.9],['button',.6]].map(([role,rough])=>[role,
+  ()=>marEaMat('tot-'+role,()=>new THREE.MeshStandardMaterial({color:TOT_SOFA[role==='seat'?'seatColor':role],roughness:rough}))]));
 const STUDY_MATS={wood:()=>FMAT.wood, frame:()=>FMAT.dark, fabric:()=>marEaMat('task-chair-fabric',()=>new THREE.MeshStandardMaterial({color:0xb9b7b2,roughness:.85}))};
 const ARM_CHAIR_MATS={wood:()=>marEaMat('arm-chair-wood',()=>new THREE.MeshStandardMaterial({color:ARM_CHAIR.wood,roughness:.55})),
   seat:()=>marEaMat('arm-chair-seat',()=>new THREE.MeshStandardMaterial({color:ARM_CHAIR.seatColor,roughness:.5}))};
@@ -1932,6 +1954,7 @@ const FURNITURE_SHAPES = {
   armChair(g,w,d,h){ addPartBoxes(g,armChairParts(w,d,h),ARM_CHAIR_MATS); },
   lotusTable(g,w,d,h){ drawLotus(g,w,d,h); },
   parallelBoard(g,w,d,h){ addPartBoxes(g,parallelBoardParts(w,d,h),PARALLEL_MATS); },
+  totSofa(g,w,d,h){ addPartBoxes(g,totSofaParts(w,d,h),TOT_MATS); },
   bravia65(g,w,d,h){ addPartBoxes(g,bravia65Parts(w,d,h),BRAVIA_MATS); },
   // 採用品（web/products.js）：部品は data/products/*.json から。案の選択肢で見た目が変わる
   product(g,w,d,h,o){RyukaProducts.draw(g,o.product,w,d,h,o.finish,o.options,o.yaw);},
@@ -2199,6 +2222,12 @@ const DECOR_SHAPES = {
     colorRole(fPart(group,tw,t,d/2-back-.03,x,seat,(back+d/2-.03)/2,FMAT.fabricTan),'accent');
   }}
 };
+// TOTのひざ掛け（2026-11-10）：背の前面から座面へ掛けた1枚（背は後ろ側1.05mだけなので、背のある側の中ほど）。Blenderは折れまで作る
+DECOR_SHAPES['sofa-throw']={anchor:'totSofa', draw(group,w,d,h){
+  const seat=TOT_SOFA.seat, back=-d/2+.2, t=.012, tw=.36, x=(w/2-1.05+w/2)/2;
+  colorRole(fPart(group,tw,h-seat-.02,t,x,seat,back+t/2+.002,FMAT.fabricTan),'accent');
+  colorRole(fPart(group,tw,t,.37,x,seat,back+.185,FMAT.fabricTan),'accent');
+}};
 const furnitureMeshes = new Map(); // id -> { holder, label }
 function placeFurnitureItem(item){
   const profile = FURNITURE_CATALOG[item.type];
