@@ -1708,7 +1708,7 @@ function addPartBoxes(g,parts,mats=STUDY_MATS){
 }
 // ---- ソファ WQ19CR（展示品の候補、片肘のカウチ。2026-11-07）----
 // 形と色の定義は data/products/wq19-sofa.json（WQ19_PROFILE）。部品（箱・先細りの脚・断面を押し出したクッション）は
-// Blender（blender/wq19_assets.py）と同じ。+zが正面、肘は-x側（正面から見て左）。寸法は固定、色はフレーム（N/B/U）とクッションの張り地
+// Blender（blender/wq19_assets.py）と同じ。+zが正面、肘は+x側（座った人から見て左）。寸法は固定、色はフレーム（N/B/U、購入品はN-DU）とクッションの張り地
 function wq19Settings(w,d,h,finish={}){
   const P=WQ19_PROFILE;
   if([w,d,h].some((v,i)=>!Number.isFinite(v)||Math.abs(v-P.dimensions[i])>1e-7)) throw Error('ソファWQ19CRは幅2.05・奥行0.90・高さ0.78m専用です');
@@ -1717,16 +1717,21 @@ function wq19Settings(w,d,h,finish={}){
   for(const role of ['frame','fabric']) if(!Object.hasOwn(P.finishes[role],value[role])) throw Error('未知の商品色です');
   return value;
 }
-let wq19WoodMap=null, wq19FabricMap=null;
-function wq19WoodTexture(){
-  if(wq19WoodMap!==null) return wq19WoodMap||null;
+let wq19WoodMap=null, wq19OakMap=null, wq19FabricMap=null;
+function wq19WoodTexture(oak){
+  if(oak && wq19OakMap!==null) return wq19OakMap||null;
+  if(!oak && wq19WoodMap!==null) return wq19WoodMap||null;
   const cv=drawingCanvas(256,256);
-  if(!cv){ wq19WoodMap=false; return null; }
-  const {c,g}=cv, rnd=seededRandom(1110);
+  if(!cv){ if(oak) wq19OakMap=false; else wq19WoodMap=false; return null; }
+  const {c,g}=cv, rnd=seededRandom(oak?1112:1110);
   g.fillStyle='#f1f1f1'; g.fillRect(0,0,256,256);
   for(let i=0;i<90;i++){ const y=rnd()*256; g.strokeStyle=`rgba(0,0,0,${.04+rnd()*.08})`; g.lineWidth=.5+rnd()*1.2; g.beginPath(); g.moveTo(0,y); g.bezierCurveTo(80,y+(rnd()-.5)*6,170,y+(rnd()-.5)*6,256,y+(rnd()-.5)*3); g.stroke(); }
-  wq19WoodMap=new THREE.CanvasTexture(c); wq19WoodMap.wrapS=wq19WoodMap.wrapT=THREE.RepeatWrapping;
-  return wq19WoodMap;
+  if(oak){   // オークの導管：木目の向き（横）に短く黒っぽい筋が点々と並ぶ（色見本の写真）
+    for(let i=0;i<520;i++){ const x=rnd()*256,y=rnd()*256,len=6+rnd()*34; g.strokeStyle=`rgba(40,20,8,${.28+rnd()*.3})`; g.lineWidth=.8+rnd()*1.1; g.beginPath(); g.moveTo(x,y); g.lineTo(x+len,y+(rnd()-.5)*1.2); g.stroke(); }
+  }
+  const tex=new THREE.CanvasTexture(c); tex.wrapS=tex.wrapT=THREE.RepeatWrapping;
+  if(oak) wq19OakMap=tex; else wq19WoodMap=tex;
+  return tex;
 }
 function wq19FabricTexture(){
   if(wq19FabricMap!==null) return wq19FabricMap||null;
@@ -1741,7 +1746,7 @@ function wq19FabricTexture(){
 function drawWq19(g,w,d,h,finish){
   const P=WQ19_PROFILE, cfg=wq19Settings(w,d,h,finish);
   const mats={
-    frame:marEaMat('wq19-frame-'+cfg.frame,()=>{ const map=wq19WoodTexture(); return new THREE.MeshStandardMaterial({color:'#'+P.finishes.frame[cfg.frame].color,roughness:.55,...(map?{map}:{})}); }),
+    frame:marEaMat('wq19-frame-'+cfg.frame,()=>{ const fin=P.finishes.frame[cfg.frame], map=wq19WoodTexture(fin.grain==='oak'); return new THREE.MeshStandardMaterial({color:'#'+fin.color,roughness:.55,...(map?{map}:{})}); }),
     fabric:marEaMat('wq19-fabric-'+cfg.fabric,()=>{ const map=wq19FabricTexture(); return new THREE.MeshStandardMaterial({color:'#'+P.finishes.fabric[cfg.fabric].color,roughness:.95,...(map?{map}:{})}); }),
   };
   for(const p of P.parts){
@@ -1749,6 +1754,11 @@ function drawWq19(g,w,d,h,finish){
     let mesh;
     if(p.kind==='box'){ mesh=new THREE.Mesh(new THREE.BoxGeometry(x1-x0,y1-y0,z1-z0),mat); mesh.position.set((x0+x1)/2,(y0+y1)/2,(z0+z1)/2); }
     else if(p.kind==='frustum'){ mesh=new THREE.Mesh(new THREE.CylinderGeometry(p.topRadius,p.bottomRadius,y1-y0,p.facets),mat); mesh.position.set((x0+x1)/2,(y0+y1)/2,(z0+z1)/2); }
+    else if(p.kind==='cylinderX'){   // 筒形のクッション：x 方向に寝かせた円柱（断面は z と高さの範囲の楕円）
+      mesh=new THREE.Mesh(new THREE.CylinderGeometry(.5,.5,x1-x0,32),mat);
+      mesh.rotation.z=Math.PI/2; mesh.scale.set(y1-y0,1,z1-z0);   // 回転の前の x 軸＝高さ方向（y の範囲）、z 軸＝奥行き方向
+      mesh.position.set((x0+x1)/2,(y0+y1)/2,(z0+z1)/2);
+    }
     else if(p.kind==='section'){   // 断面（台形など）を軸方向へ押し出す。axis x は断面が(z,高さ)、z は(x,高さ)
       const shape=new THREE.Shape();
       p.polygon.forEach(([u,v],i)=>{ const sx=p.axis==='x' ? -u : u; if(i) shape.lineTo(sx,v); else shape.moveTo(sx,v); });
