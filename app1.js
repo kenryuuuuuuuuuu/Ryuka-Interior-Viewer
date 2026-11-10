@@ -878,6 +878,26 @@ function rebuildWalkWalls(level, useEdits=true){
   walkWallGroups[level] = nextGroup;
   walkGroup.add(nextGroup);
 }
+// ---- 化粧梁（CEILING_BEAMS＝data/ceiling-beams.json） ----
+// 勾配天井の下面に上面を付け、端は垂直に切った梁。両端の上面の高さ(top0/top1)は生成データが持つ
+// （blender/build_interior.py の build_ceiling_beams() と同じ数字）。色は固定で、仕上げの案では変わらない
+const ceilingBeamMats = {};
+function ceilingBeamMesh(b){
+  const key = b.color+'/'+b.roughness;
+  if(!ceilingBeamMats[key]) ceilingBeamMats[key] = new THREE.MeshStandardMaterial({color:parseInt(b.color,16), roughness:b.roughness});
+  const geo = new THREE.BoxGeometry(1,1,1);
+  const pos = geo.attributes.position;
+  for(let i=0;i<pos.count;i++){
+    const t = pos.getZ(i)+0.5;                      // 0＝北の端(z0)、1＝南の端(z1)
+    const top = b.top0 + (b.top1-b.top0)*t;
+    pos.setXYZ(i, b.x + pos.getX(i)*b.width - CX, pos.getY(i)>0 ? top : top-b.height, b.z0 + (b.z1-b.z0)*t - CZ);
+  }
+  geo.computeVertexNormals();
+  const mesh = new THREE.Mesh(geo, ceilingBeamMats[key]);
+  mesh.name = 'ceiling-beam:'+b.id;
+  return mesh;
+}
+
 [1,2].forEach(level=>{
   const baseY = level===1 ? LEVELS.fl1 : LEVELS.fl2;
   rebuildWalkWalls(level, false);
@@ -953,6 +973,7 @@ function rebuildWalkWalls(level, useEdits=true){
       });
     });
   }
+  CEILING_BEAMS.filter(b=>b.level===level).forEach(b=> walkGroup.add(ceilingBeamMesh(b)));
 });
 
 // ---- 内覧モードのアーチ開口：迫り持ち（スパンドレル）の壁を復元する ----
