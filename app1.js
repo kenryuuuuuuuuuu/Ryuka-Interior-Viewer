@@ -3791,7 +3791,8 @@ function pendantFromRecipe(group, shapeName, item){
       group.add(m);
     }else tubeBetween(part.from, part.to, part.r, part.role);
   }
-  const [ax, ay, az] = recipe.attach, drop = item.mountHeight;
+  // ceilingDrop：レールから下げる形は、コードが天井でなくレールの下面（天井からその分下）で終わる
+  const [ax, ay, az] = recipe.attach, drop = item.mountHeight - (recipe.ceilingDrop || 0);
   tubeBetween([ax, ay, az], [ax, drop, az], recipe.cord.r, recipe.cord.role);
   const c = recipe.canopy, cm = new THREE.Mesh(new THREE.CylinderGeometry(c.r, c.r, c.h, 32), mat(c.role));
   cm.position.set(ax, drop - c.h/2, az);
@@ -5632,6 +5633,7 @@ function enterWalkMode(spawn){
 }
 function exitWalkMode(){
   walkGroup.visible = false;
+  if(typeof hideWalkDims === 'function') hideWalkDims();
   floorMode = savedFloorMode;
   applyFloorMode();
   restoreLayerVisibility();
@@ -5691,6 +5693,67 @@ window.addEventListener('keydown', e=>{
 });
 window.addEventListener('keyup', e=>{ if(e.code===electricalNudgeHoldCode) electricalNudgeHoldCode = null; });
 
+// ---- 内覧でタップした家具・設備の寸法（ショールームで「あの家具の寸法は？」と思ったときのため） ----
+// 短いタップ（動かさない）だけが対象で、ドラッグ（視点操作）・ジョイスティック・2本指は今までどおり。
+// 壁・天井・扉の向こう側の物は選ばない（手前に壁などがあればその位置で止める）。寸法は m を mm の表示に直す。
+let walkTap = null;
+const WALK_TAP_SLOP = 8, WALK_TAP_MS = 600;
+const walkTapRaycaster = new THREE.Raycaster();
+const walkDimsEl = document.getElementById('walkDims');
+let walkDimsTimer = null;
+const mmText = v=>Math.round(v*1000).toLocaleString('en-US');
+function hideWalkDims(){ clearTimeout(walkDimsTimer); walkDimsEl.classList.remove('on'); walkDimsEl.style.display = 'none'; }
+function showWalkDims(name, detail, clientX, clientY){
+  walkDimsEl.replaceChildren();
+  const n = document.createElement('div'); n.className = 'n'; n.textContent = name;
+  const d = document.createElement('div'); d.className = 'd'; d.textContent = detail;
+  walkDimsEl.append(n, d);
+  walkDimsEl.style.display = 'block';
+  const w = walkDimsEl.offsetWidth;
+  walkDimsEl.style.left = Math.max(w/2 + 8, Math.min(window.innerWidth - w/2 - 8, clientX)) + 'px';
+  walkDimsEl.style.top = Math.max(walkDimsEl.offsetHeight + 12, clientY - 14) + 'px';
+  requestAnimationFrame(()=>walkDimsEl.classList.add('on'));
+  clearTimeout(walkDimsTimer);
+  walkDimsTimer = setTimeout(hideWalkDims, 5000);
+}
+// 家具：幅×奥行×高さ（丸い卓は直径）。床から浮いているものは床からの高さ
+function furnitureDimsText(item){
+  const f = effectiveFurniture(item), shape = (FURNITURE_CATALOG[f.type] || {}).shape || '';
+  const size = (/round/i.test(shape) && Math.abs(f.width - f.depth) < 0.005)
+    ? `φ${mmText(f.width)} × H${mmText(f.height)}` : `W${mmText(f.width)} × D${mmText(f.depth)} × H${mmText(f.height)}`;
+  return size + ' mm' + (f.elevation > 0.005 ? `　（床から ${mmText(f.elevation)}）` : '');
+}
+// 電気設備：壁付けは取付けの高さ、天井から吊るすものは寸法と「かさの下端の床からの高さ」
+function electricalDimsText(eff){
+  const size = Math.abs(eff.width - eff.depth) < 0.005 ? `φ${mmText(eff.width)} × H${mmText(eff.height)}` : `W${mmText(eff.width)} × D${mmText(eff.depth)} × H${mmText(eff.height)}`;
+  if(eff.mount === 'wall') return `取付け高 床から ${mmText(eff.mountHeight)} mm（${size} mm）`;
+  if(eff.mount === 'ceiling'){
+    const bottom = slopedCeilingHeightAt(eff.x, eff.z) - eff.mountHeight - eff.height;
+    return eff.mountHeight > 0.02 ? `${size} mm　下端は床から ${mmText(bottom)}` : `${size} mm`;
+  }
+  return `${size} mm` + (eff.mountHeight > 0.005 ? `　（床から ${mmText(eff.mountHeight)}）` : '');
+}
+function walkTapAt(clientX, clientY){
+  const rect = renderer.domElement.getBoundingClientRect();
+  const ndc = new THREE.Vector2(((clientX-rect.left)/rect.width)*2-1, -((clientY-rect.top)/rect.height)*2+1);
+  walkTapRaycaster.setFromCamera(ndc, walkCamera);
+  for(const hit of walkTapRaycaster.intersectObjects([furnitureAll, electricalAll, walkGroup], true)){
+    const o = hit.object;
+    if(!o.isMesh || !isEffectivelyVisible(o)) continue;
+    for(let n = o; n; n = n.parent){
+      const ud = n.userData || {};
+      if(ud.furnitureId){
+        const base = FURNITURE_ITEMS.find(f=>f.id===ud.furnitureId);
+        if(base) return showWalkDims(base.label || (FURNITURE_CATALOG[base.type] || {}).label || base.type, furnitureDimsText(base), clientX, clientY);
+      }
+      if(ud.electricalId){
+        const base = findElectricalBase(ud.electricalId);
+        if(base){ const eff = effectiveElectrical(base); return showWalkDims(eff.label || base.label, electricalDimsText(eff), clientX, clientY); }
+      }
+    }
+    if(!(o.material && o.material.transparent)) return;   // 壁・床・天井・扉が手前なら、その向こうは選ばない
+  }
+}
 // ---- 入力：ポインタ（マウスドラッグ／タッチ）でのルック＋バーチャルジョイスティック ----
 const joyBaseEl = document.getElementById('joyBase');
 const joyKnobEl = document.getElementById('joyKnob');
@@ -5728,7 +5791,9 @@ function onWalkPointerDown(e){
     joyId = e.pointerId; joyBaseX = e.clientX; joyBaseY = e.clientY;
     return;
   }
+  hideWalkDims();
   walkLookPointers.set(e.pointerId, {x:e.clientX, y:e.clientY});
+  walkTap = walkLookPointers.size===1 ? {id:e.pointerId, x:e.clientX, y:e.clientY, t:performance.now()} : null;   // 1本指の短いタップ＝寸法の表示
   if(walkLookPointers.size===2){
     lookDragId = null; // 2本指の間は視点を回さない
     walkPinchStartDist = walkPinchDistance();
@@ -5747,6 +5812,7 @@ function onWalkPointerMove(e){
     return;
   }
   if(walkLookPointers.has(e.pointerId)) walkLookPointers.set(e.pointerId, {x:e.clientX, y:e.clientY});
+  if(walkTap && e.pointerId===walkTap.id && Math.hypot(e.clientX-walkTap.x, e.clientY-walkTap.y) > WALK_TAP_SLOP) walkTap = null;   // 動かしたら視点操作
   if(walkLookPointers.size===2 && walkPinchStartDist){
     // 指を広げる（ピンチアウト）と広角、狭めると狭角。開始時の間隔に対する比で決める
     setWalkFov(walkPinchStartFov * walkPinchDistance() / walkPinchStartDist);
@@ -5760,6 +5826,8 @@ function onWalkPointerMove(e){
   }
 }
 function onWalkPointerUp(e){
+  if(mode==='walk' && walkTap && e.pointerId===walkTap.id && e.type==='pointerup' && performance.now()-walkTap.t < WALK_TAP_MS) walkTapAt(e.clientX, e.clientY);
+  if(walkTap && e.pointerId===walkTap.id) walkTap = null;
   if(e.pointerId===joyId){ joyId=null; joyVec.x=0; joyVec.y=0; joyKnobEl.style.transform='translate(0,0)'; }
   const wasLook = walkLookPointers.delete(e.pointerId);
   if(e.pointerId===lookDragId){ lookDragId=null; }

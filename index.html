@@ -90,6 +90,13 @@
   #fovHint{position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);z-index:21;display:none;
       background:rgba(20,26,32,.66);color:#fff;font-size:13px;padding:6px 14px;border-radius:8px;pointer-events:none;
       white-space:nowrap;}
+  /* 内覧でタップした家具・設備の寸法（控えめに。操作の邪魔をしない） */
+  #walkDims{position:fixed;z-index:21;display:none;pointer-events:none;max-width:min(88vw,340px);
+      background:rgba(20,26,32,.58);color:#fff;font-size:11px;line-height:1.45;padding:5px 10px;border-radius:8px;
+      transform:translate(-50%,-100%);transition:opacity .25s;opacity:0;}
+  #walkDims.on{opacity:1;}
+  #walkDims .n{font-size:12px;font-weight:600;}
+  #walkDims .d{opacity:.88;white-space:nowrap;}
   #crosshair{position:fixed;top:50%;left:50%;width:6px;height:6px;margin:-3px 0 0 -3px;border-radius:50%;
       background:rgba(255,255,255,.85);box-shadow:0 0 0 1.5px rgba(0,0,0,.35);z-index:21;display:none;pointer-events:none;}
   #moveHint{position:fixed;bottom:calc(var(--safe-b) + 14px);left:50%;transform:translateX(-50%);z-index:21;display:none;
@@ -620,6 +627,7 @@ body{background:#dfe3e7}
 </div>
 <div id="crosshair"></div>
 <div id="fovHint"></div>
+<div id="walkDims" aria-live="polite"></div>
 <div id="moveHint">WASD / 矢印キーで移動　｜　ドラッグで視点操作　｜　Vキーで一人称/三人称切替</div>
 <canvas id="minimap" width="220" height="140" title="クリックした場所へ移動"></canvas>
 <div id="joyBase"><div id="joyKnob"></div></div>
