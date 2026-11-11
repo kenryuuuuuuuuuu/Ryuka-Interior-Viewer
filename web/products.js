@@ -32,7 +32,8 @@ function productSettings(id, w, d, h, finish, options){
   const eff = effectiveRoles(product, chosen);
   const colors = Object.fromEntries(Object.entries(product.roles).map(([role])=>[role, finish[role] || eff[role].color]));
   const patterns = Object.fromEntries(Object.entries(eff).map(([role, v])=>[role, v.pattern || null]));
-  return {product, colors, patterns, options: chosen};
+  const textures = Object.fromEntries(Object.entries(eff).map(([role, v])=>[role, v.texture || null]));
+  return {product, colors, patterns, textures, options: chosen};
 }
 
 function effectiveRoles(product, chosen){
@@ -41,7 +42,7 @@ function effectiveRoles(product, chosen){
     const choice = o.choices[(chosen || {})[key] ?? o.default];
     for(const [role, v] of Object.entries((choice && choice.roles) || {})){
       if(v.color !== undefined) out[role].color = v.color;
-      if(v.pattern !== undefined) out[role].pattern = v.pattern === 'plain' ? undefined : v.pattern;
+      if(v.pattern !== undefined){ out[role].pattern = v.pattern === 'plain' ? undefined : v.pattern; out[role].texture = v.pattern === 'stone' ? v.texture : undefined; }
     }
   }
   return out;
@@ -75,12 +76,82 @@ function woodTexture(){
   return woodMap;
 }
 
+// 石目（メラミン化粧板：オフェリアの扉カラー）。模様の数字は製品の正本（data/products/*.json の texture）。
+// Blender（blender/product_assets.py の _stone_pixels）と同じ作り方：大きなむら＋中くらいの粒＋細かい斑点＋細かい砂＋小さな窪み＋筋・ひび。
+// 乱数の並びは同じにならない（ピクセル単位では一致しない）が、雰囲気と明るさの平均は同じ。1枚＝texture.tile m四方。
+const STONE_N = 512;
+function mulberry32(seed){
+  let a = seed >>> 0;
+  return function(){ a = (a + 0x6D2B79F5) >>> 0; let t = a; t = Math.imul(t ^ (t >>> 15), t | 1); t ^= t + Math.imul(t ^ (t >>> 7), t | 61); return ((t ^ (t >>> 14)) >>> 0) / 4294967296; };
+}
+function tileNoise(cells, rnd){   // 継ぎ目なく繰り返す値ノイズ（0〜1）
+  const grid = new Float32Array(cells*cells);
+  for(let i = 0; i < grid.length; i++) grid[i] = rnd();
+  const out = new Float32Array(STONE_N*STONE_N);
+  for(let y = 0; y < STONE_N; y++){
+    const ty = y*cells/STONE_N, iy = Math.floor(ty), fy0 = ty - iy, fy = fy0*fy0*(3 - 2*fy0), r0 = iy*cells, r1 = ((iy + 1) % cells)*cells;
+    for(let x = 0; x < STONE_N; x++){
+      const tx = x*cells/STONE_N, ix = Math.floor(tx), fx0 = tx - ix, fx = fx0*fx0*(3 - 2*fx0), ix1 = (ix + 1) % cells;
+      out[y*STONE_N + x] = (grid[r0 + ix]*(1 - fx) + grid[r0 + ix1]*fx)*(1 - fy) + (grid[r1 + ix]*(1 - fx) + grid[r1 + ix1]*fx)*fy;
+    }
+  }
+  return out;
+}
+function addLines(shade, rnd, count, lenMin, lenMax, angle, spread, amp, wobble){   // 筋・ひび（端で反対側へ回り込む）
+  for(let k = 0; k < count; k++){
+    let x = rnd()*STONE_N, y = rnd()*STONE_N;
+    const a = (angle + (rnd() - .5)*2*spread)*Math.PI/180, len = lenMin + rnd()*(lenMax - lenMin), sign = rnd() < .65 ? 1 : -1, a0 = amp*(.5 + rnd());
+    let dir = a;
+    for(let t = 0; t < len; t++){
+      dir += (rnd() - .5)*wobble; x += Math.cos(dir); y += Math.sin(dir);
+      const ix = ((Math.round(x) % STONE_N) + STONE_N) % STONE_N, iy = ((Math.round(y) % STONE_N) + STONE_N) % STONE_N;
+      shade[iy*STONE_N + ix] += sign*a0;
+    }
+  }
+}
+const STONE_MAP_MEAN = 0.82;   // 画像の平均の明るさ。素材の色はこの分だけ明るくして掛ける（色の平均を合わせる）
+const stoneCache = new Map();
+function stoneTexture(tx){
+  const key = JSON.stringify(tx);
+  if(stoneCache.has(key)) return stoneCache.get(key) || null;
+  const canvas = document.createElement('canvas');
+  const g = canvas.getContext && canvas.getContext('2d');
+  if(!g){ stoneCache.set(key, false); return null; }   // テスト環境など、描けないときは無地
+  canvas.width = canvas.height = STONE_N;
+  const rnd = mulberry32(tx.seed || 1121), N = STONE_N*STONE_N;
+  const n4 = tileNoise(4, rnd), n9 = tileNoise(9, rnd), n22 = tileNoise(22, rnd), n40 = tileNoise(40, rnd), n256 = tileNoise(256, rnd), n160 = tileNoise(160, rnd);
+  const shade = new Float32Array(N);
+  for(let i = 0; i < N; i++){
+    const cloud = n4[i]*.5 + n9[i]*.3 + n22[i]*.2 - .5;
+    const pit = Math.min(1, Math.max(0, (n160[i] - .84)/.1));
+    shade[i] = 1 + 2*tx.cloud*cloud + 2*tx.mid*(n40[i] - .5) + 2*tx.speck*(n256[i] - .5) + 2*tx.grain*(rnd() - .5) - tx.pores*.5*pit;
+  }
+  if(tx.scratch > 0) addLines(shade, rnd, Math.round(tx.scratch*180), 20, 80, 35, 30, tx.scratch*.14, .1);
+  if(tx.crack > 0) addLines(shade, rnd, Math.round(tx.crack*30), 120, 320, 20, 45, -tx.crack*.12, .25);
+  let sum = 0; for(let i = 0; i < N; i++) sum += shade[i];
+  const k = STONE_MAP_MEAN/(sum/N), img = g.createImageData(STONE_N, STONE_N);
+  for(let i = 0; i < N; i++){
+    const v = Math.round(255*Math.min(1, Math.max(0, shade[i]*k)));
+    img.data[i*4] = img.data[i*4 + 1] = img.data[i*4 + 2] = v; img.data[i*4 + 3] = 255;
+  }
+  g.putImageData(img, 0, 0);
+  const map = new THREE.CanvasTexture(canvas);
+  map.wrapS = map.wrapT = THREE.RepeatWrapping;
+  map.repeat.set(1/tx.tile, 1/tx.tile);
+  stoneCache.set(key, map);
+  return map;
+}
+
 const materialCache = new Map();
 function materialFor(role, color){
-  const key = `${color}|${role.pattern || ''}|${role.opacity ?? 1}`;
+  const key = `${color}|${role.pattern || ''}|${role.pattern === 'stone' ? JSON.stringify(role.texture) : ''}|${role.opacity ?? 1}`;
   if(!materialCache.has(key)){
     const options = {color: new THREE.Color('#' + color), vertexColors: true};
     if(role.pattern === 'wood'){ const map = woodTexture(); if(map) options.map = map; }
+    if(role.pattern === 'stone' && role.texture){
+      const map = stoneTexture(role.texture);
+      if(map){ options.map = map; options.color = new THREE.Color(...[0, 2, 4].map(i=>Math.min(1, parseInt(color.slice(i, i + 2), 16)/255/STONE_MAP_MEAN))); }
+    }
     if(role.opacity !== undefined){ Object.assign(options, {transparent: true, opacity: role.opacity, depthWrite: false, side: THREE.DoubleSide}); }
     materialCache.set(key, new THREE.MeshBasicMaterial(options));
   }
@@ -92,7 +163,7 @@ const UNIT_CYL = new THREE.CylinderGeometry(0.5, 0.5, 1, 28).toNonIndexed();
 
 // yaw：家具グループのY軸回転（ラジアン）。陰影は部屋の中での面の向きで決める
 function drawProduct(group, id, w, d, h, finish, options, yaw = 0){
-  const {product, colors, patterns, options: chosen} = productSettings(id, w, d, h, finish, options);
+  const {product, colors, patterns, textures, options: chosen} = productSettings(id, w, d, h, finish, options);
   const buffers = {};
   const cos = Math.cos(yaw), sin = Math.sin(yaw);
   for(const part of partsFor(product, chosen)){
@@ -117,7 +188,7 @@ function drawProduct(group, id, w, d, h, finish, options, yaw = 0){
     geo.setAttribute('position', new THREE.Float32BufferAttribute(buf.pos, 3));
     geo.setAttribute('color', new THREE.Float32BufferAttribute(buf.col, 3));
     geo.setAttribute('uv', new THREE.Float32BufferAttribute(buf.uv, 2));
-    const mesh = new THREE.Mesh(geo, materialFor({...product.roles[role], pattern: patterns[role] || undefined}, colors[role]));
+    const mesh = new THREE.Mesh(geo, materialFor({...product.roles[role], pattern: patterns[role] || undefined, texture: textures[role] || undefined}, colors[role]));
     mesh.name = `product-${role}`;
     if(product.roles[role].opacity !== undefined) mesh.renderOrder = 2;
     group.add(mesh);
