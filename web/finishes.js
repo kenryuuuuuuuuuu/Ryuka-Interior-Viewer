@@ -249,10 +249,13 @@ function addFloorSkin(room, material){
   const y = (room.level === 1 ? LEVELS.fl1 : LEVELS.fl2) + (room.floorOffsetM || 0) + 0.006;
   floorPolygonMesh(roomPolygonPoints(room), y, material, group);
 }
-function addCeilingSkin(room, material){
+// which: 'flat'＝勾配天井の部屋の平らな部分だけ（キッチン側）、'sloped'＝勾配の部分だけ、省くと天井全体
+function addCeilingSkin(room, material, which){
   if(overlapsStairOpening(room, room.level)) return;   // 階段の上は吹き抜け
   const baseY = room.level === 1 ? LEVELS.fl1 : LEVELS.fl2;
-  const pieces = room.level === 1 ? SLOPED_CEILING_PIECES.filter(p=>p.roomId === room.id) : [];
+  let pieces = room.level === 1 ? SLOPED_CEILING_PIECES.filter(p=>p.roomId === room.id) : [];
+  if(which) pieces = pieces.filter(p=>p.sloped === (which === 'sloped'));
+  if(!pieces.length && which) return;
   if(!pieces.length){
     floorPolygonMesh(roomPolygonPoints(room), baseY + CEIL_H - 0.02, material, group);
     return;
@@ -276,7 +279,11 @@ function render(){
     const room = roomsById[surface.roomId];
     if(!room) continue;
     if(surface.kind === 'floor') addFloorSkin(room, materialFor(candidate, SHADE.floor));
-    else if(surface.kind === 'ceiling') addCeilingSkin(room, materialFor(candidate, SHADE.ceiling));
+    else if(surface.kind === 'ceiling'){
+      // 平らな部分（キッチン側）が別の面になっている部屋は、全体の面は勾配の部分だけを受け持つ
+      const split = SURFACE_REGISTRY.some(x=>x.roomId === surface.roomId && x.kind === 'ceiling' && x.part === 'flat');
+      addCeilingSkin(room, materialFor(candidate, SHADE.ceiling), surface.part ? 'flat' : split ? 'sloped' : undefined);
+    }
     else{
       const w = walls.find(x=>x.surface.id === surface.id);
       if(w) addWallSkin(w.info, materialFor(candidate, SHADE[w.info.orientation]));
@@ -320,8 +327,8 @@ function setAssignment(roomId, part, candidateId){
   if(Object.keys(parts).length) s.assignments[roomId] = parts; else delete s.assignments[roomId];
   commit();
 }
-function setAccent(surfaceId, candidateId){
-  const s = schemeForRoom((walls.find(w=>w.surface.id === surfaceId) || {surface: {}}).surface.roomId);
+function setAccent(surfaceId, candidateId){   // 壁のアクセントクロスと、天井の部分（キッチンの天井）の面ごとの割当
+  const s = schemeForRoom((SURFACE_REGISTRY.find(x=>x.id === surfaceId) || {}).roomId);
   s.surfaces = {...(s.surfaces || {})};
   if(candidateId) s.surfaces[surfaceId] = candidateId; else delete s.surfaces[surfaceId];
   commit();
@@ -428,7 +435,9 @@ function specList(){
     total[zone]++;
     if(used.every(Boolean)) decided[zone]++;
     const accents = walls.filter(w=>w.surface.roomId === room.id && (s.surfaces || {})[w.surface.id])
-      .map(w=>`${w.info.direction}の壁（${w.info.length.toFixed(2)}m）：${cell(s.surfaces[w.surface.id])}`);
+      .map(w=>`${w.info.direction}の壁（${w.info.length.toFixed(2)}m）：${cell(s.surfaces[w.surface.id])}`)
+      .concat(SURFACE_REGISTRY.filter(x=>x.roomId === room.id && x.kind === 'ceiling' && x.part && (s.surfaces || {})[x.id])
+        .map(x=>`${x.labelJa || '天井の一部'}：${cell(s.surfaces[x.id])}`));
     return [`${FINISH_ZONE_LABELS[zone]} ${room.level}F ${room.name}`, cell(parts.floor), cell(parts.wall), cell(parts.ceiling), accents.join('／')];
   });
   const equipment = optionItems.flatMap(({item, product})=>Object.entries(product.options).map(([key, o])=>
@@ -438,7 +447,7 @@ function specList(){
     .flatMap(item=>{ const s = schemeForRoom(room.id); return Object.entries(colorRolesOf(item)).filter(([role])=>((s.furniture || {})[item.id] || {})[role])
       .map(([role, label])=>`${room.name} ${item.label}・${label}：${cell(s.furniture[item.id][role])}`); }));
   const label = FINISH_ZONES.map(z=>`${FINISH_ZONE_LABELS[z]}：${schemeOfZone(z).name}`).join('／');
-  return {title: `内装仕上げ一覧（${label}）`, head: ['部屋', '床', '壁', '天井', 'アクセント壁'], rows, equipment, furniture,
+  return {title: `内装仕上げ一覧（${label}）`, head: ['部屋', '床', '壁', '天井', 'アクセント壁・天井の一部'], rows, equipment, furniture,
     summary: FINISH_ZONES.map(z=>`${FINISH_ZONE_LABELS[z]}の床・壁・天井がすべて決まった部屋：${decided[z]}／${total[z]}`).join('　')};
 }
 const specText = (c, i)=>c || (i >= 1 && i <= 3 ? '未定' : '—');
@@ -491,6 +500,7 @@ function refreshPanel(){
   const parts = (s.assignments || {})[selectedRoom] || {};
   const roomItems = optionItems.filter(x=>x.item.room === selectedRoom);
   const roomWalls = walls.filter(w=>w.surface.roomId === selectedRoom);
+  const roomCeilingParts = SURFACE_REGISTRY.filter(x=>x.roomId === selectedRoom && x.kind === 'ceiling' && x.part);
   const roomFurniture = activeFurnitureItems().filter(item=>item.room === selectedRoom && colorRolesOf(item));
   // 部屋は自宅（1F・2F）と民泊に分けて並べる。●はその区分の表示中の案で決まっている部屋
   const roomGroups = [['自宅 1F', 'home', 1], ['自宅 2F', 'home', 2], ['民泊', 'guest', 1]];
@@ -515,6 +525,11 @@ function refreshPanel(){
       el('span', {class: 'fin-part-label'}, FINISH_PART_LABELS[part]),
       swatch(candidateById(parts[part])),
       candidateSelect([part], parts[part], v=>setAssignment(selectedRoom, part, v)))),
+    // 天井の部分（LDKのキッチンの天井）。選ばなければ部屋の天井と同じ
+    roomCeilingParts.map(p=>el('div', {class: 'fin-part'},
+      el('span', {class: 'fin-part-label'}, p.labelJa || '天井の一部'),
+      swatch(candidateById((s.surfaces || {})[p.id]) || candidateById(parts.ceiling)),
+      candidateSelect(['ceiling'], (s.surfaces || {})[p.id], v=>setAccent(p.id, v), `（${roomName(selectedRoom)}の天井と同じ）`))),
     roomWalls.length ? el('details', {class: 'fin-accents', open: roomWalls.some(w=>(s.surfaces || {})[w.surface.id])},
       el('summary', null, `アクセントクロス（壁を1面ずつ変える・${roomWalls.length}面）`),
       roomWalls.map(w=>el('div', {class: 'fin-part'},

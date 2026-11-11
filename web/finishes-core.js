@@ -1,6 +1,6 @@
 // 内装の仕上げの解決（画面に依存しない部分）。scripts/finishes.py の resolve() と同じ規則で、
 // tests/test_finishes.py が両者の結果の一致を確認する。
-//   面ごとの割当（壁のみ・アクセントクロス）→ 部屋×部位の割当 の順に決まり、割当のない面は含めない。
+//   面ごとの割当（壁のアクセントクロスと、天井の部分の面）→ 部屋×部位の割当 の順に決まり、割当のない面は含めない。
 const FINISH_PARTS = ['floor', 'wall', 'ceiling'];
 const FINISH_CANDIDATE_PARTS = {floor: ['floor'], cloth: ['wall', 'ceiling'], furniture: []};
 const FINISH_PART_LABELS = {floor: '床', wall: '壁', ceiling: '天井'};
@@ -20,13 +20,17 @@ function finishesActiveScheme(doc){
 }
 const finishesSchemeOf = (doc, schemeId)=>schemeId ? doc.schemes.find(s=>s.id === schemeId) : finishesActiveScheme(doc);
 
+// 面ごとの割当（scheme.surfaces）で別の候補にできる面：壁（アクセントクロス）と、天井の部分の面
+// （2026-11-11：自宅LDKのキッチン側の平らな天井）。scripts/finishes.py の takes_surface_override() と同じ
+const finishesTakesSurface = surface=>surface.kind === 'wall' || (surface.kind === 'ceiling' && !!surface.part);
+
 function finishesResolve(doc, registry, schemeId){
   const scheme = finishesSchemeOf(doc, schemeId);
   if(!scheme) return {};
   const candidates = Object.fromEntries(doc.candidates.map(c=>[c.id, c]));
   const result = {};
   for(const surface of registry){
-    let cid = surface.kind === 'wall' ? (scheme.surfaces || {})[surface.id] : undefined;
+    let cid = finishesTakesSurface(surface) ? (scheme.surfaces || {})[surface.id] : undefined;
     cid = cid || ((scheme.assignments || {})[surface.roomId] || {})[surface.kind];
     if(cid && candidates[cid]) result[surface.id] = candidates[cid];
   }

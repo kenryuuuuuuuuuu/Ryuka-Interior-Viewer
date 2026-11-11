@@ -3761,6 +3761,22 @@ const EMAT = {
   reserve: new THREE.MeshStandardMaterial({color:0x2f6db5, roughness:0.5, transparent:true, opacity:.55}), // 予備の位置（まだ付けない）
   edge: new THREE.LineBasicMaterial({color:0x1a1a1a}) // 小さい形状でも輪郭がはっきり分かるよう全形状に付ける
 };
+EMAT.bulbGlow = new THREE.MeshStandardMaterial({color:0xfff1d0, emissive:0xffe2a8, emissiveIntensity:0.9, roughness:0.5});   // ペンダントの電球・かさの内側の光
+// ペンダントの候補の色（項目の look）。同じ色の材質は使い回す
+const E_LOOK_MATERIALS = new Map();
+const eHex = (hex, fallback)=>parseInt(/^[0-9a-f]{6}$/i.test(hex || '') ? hex : fallback, 16);
+function eLookShade(hex, glow, roughness, metalness){
+  const key = `shade|${hex}|${glow}|${roughness}|${metalness}`;
+  if(!E_LOOK_MATERIALS.has(key)) E_LOOK_MATERIALS.set(key, new THREE.MeshStandardMaterial({color:eHex(hex, 'efece4'),
+    emissive:0xffd9a0, emissiveIntensity:glow, roughness, metalness, side:THREE.DoubleSide}));
+  return E_LOOK_MATERIALS.get(key);
+}
+function eLookFitting(look){
+  const brass = look.fittingFinish === 'brass', key = `fit|${look.fitting}|${brass}`;
+  if(!E_LOOK_MATERIALS.has(key)) E_LOOK_MATERIALS.set(key, new THREE.MeshStandardMaterial({color:eHex(look.fitting, '232323'),
+    roughness:brass ? 0.4 : 0.45, metalness:brass ? 0.45 : 0.4}));   // 環境の反射がないので、金属の度合いは控えめ（真鍮の色が見える程度）
+  return E_LOOK_MATERIALS.get(key);
+}
 const EDISC_EDGES = new THREE.EdgesGeometry(FURNITURE_CYL);
 const EBOX_EDGES = new THREE.EdgesGeometry(FURNITURE_BOX);
 // fPart()は共有の単位ジオメトリをスケールして使い回すため、輪郭線もscale/positionを
@@ -3815,6 +3831,33 @@ const ELECTRICAL_SHAPES = {
     fPart(group, opening*2+0.006,0.008,opening*2+0.006, 0,bottom-0.004,0, EMAT.plateDark, true);  // 下の細い輪
     const cord=(item&&item.mountHeight)||0.6;
     fPart(group, 0.007,cord,0.007, 0,0,0, EMAT.plateDark, true);  // コード
+  },
+  // 円卓の上のペンダントの候補（2026-11-11）。原点はかさの上端、下へ吊る。色は項目の look {shade, fitting, fittingFinish}。
+  // ドーム（乳白ガラス／つや消し金属）：開口が下の半だ円のかさ。blender/electrical_assets.py の dome_pendant_parts() と同じ比率
+  domePendant(group,w,d,h,item){
+    const look=(item&&item.look)||{}, glass=!!item&&item.type==='light-pendant-dome-glass', R=w/2, pts=[];
+    for(let i=0;i<=20;i++){ const t=Math.PI/2*i/20; pts.push(new THREE.Vector2(R*Math.sin(t), -h*(1-Math.cos(t)))); }
+    group.add(new THREE.Mesh(new THREE.LatheGeometry(pts,48), eLookShade(look.shade, glass ? .3 : 0, glass ? .35 : .75, glass ? 0 : .25)));
+    const fit=eLookFitting(look);
+    if(!glass) fPart(group, R*1.9,0.004,R*1.9, 0,-h+0.004,0, EMAT.bulbGlow, true);   // 金属のかさは、内側の明るい面（開口）が見える
+    const bulb=new THREE.Mesh(new THREE.SphereGeometry(0.035,16,12), EMAT.bulbGlow); bulb.position.set(0,-h*0.62,0); group.add(bulb);
+    fPart(group, 0.07,0.03,0.07, 0,-0.026,0, fit, true);               // かさの上の金物
+    const cord=(item&&item.mountHeight)||1.6;
+    fPart(group, 0.008,cord,0.008, 0,0,0, fit, true);                  // 吊り棒（細い）
+    fPart(group, 0.12,0.022,0.12, 0,cord-0.022,0, fit, true);          // 天井のカバー
+  },
+  // ドラム（リネン）：上下が開いた少し広がる筒。上に十字の受けと、中に電球
+  drumPendant(group,w,d,h,item){
+    const look=(item&&item.look)||{}, Rb=w/2, Rt=Rb*0.86;
+    group.add(new THREE.Mesh(new THREE.LatheGeometry([new THREE.Vector2(Rt,0), new THREE.Vector2(Rb,-h)],48), eLookShade(look.shade, .22, .9, 0)));
+    const fit=eLookFitting(look);
+    fPart(group, Rt*2,0.004,0.004, 0,-0.004,0, fit);
+    fPart(group, 0.004,0.004,Rt*2, 0,-0.004,0, fit);
+    const bulb=new THREE.Mesh(new THREE.SphereGeometry(0.035,16,12), EMAT.bulbGlow); bulb.position.set(0,-h*0.5,0); group.add(bulb);
+    fPart(group, 0.04,0.025,0.04, 0,-0.02,0, fit, true);
+    const cord=(item&&item.mountHeight)||1.6;
+    fPart(group, 0.007,cord,0.007, 0,0,0, fit, true);
+    fPart(group, 0.12,0.022,0.12, 0,cord-0.022,0, fit, true);
   },
   bracketLight(group,w,d,h){ fPartEdged(group, w,h,d, 0,-h/2,0, EMAT.light); },
   indirectLight(group,w,d,h){ fPartEdged(group, w,h,d, 0,-h,0, EMAT.light); }, // 簡易な点/線マーカー
