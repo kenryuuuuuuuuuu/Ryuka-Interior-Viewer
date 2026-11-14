@@ -3139,10 +3139,10 @@ function addDoorLeaf({ orientation, alongFrom, alongTo, wallCoord, baseY, height
     return;
   }
   if(operation==='slide-2'){
-    // 浴室の2枚引戸（連動、2026-11-14）：開けた状態＝2枚が間口の横（slideDir の側）の戸袋（間口の半分）に重なる。
-    // 戸は枠（壁の厚み）の中の2本のレールを走る（壁の面には出ない）
+    // 浴室の2枚引戸（2026-11-14、施工会社の図面）：w は枠の外寸。開けた状態＝動く戸が枠の slideDir の側の半分へ動き、
+    // そこに固定された戸と重なる。戸は枠（壁の厚み）の中の2本のレールを走る（壁の面には出ない）
     if(!slideDir) return;
-    const a0 = slideDir==='L' ? alongFrom - w/2 : alongTo, a1 = a0 + w/2;
+    const a0 = slideDir==='L' ? alongFrom : alongFrom + w/2, a1 = a0 + w/2;
     for(const track of [-SLIDE2_TRACK, SLIDE2_TRACK]){
       const c = wallCoord + track;
       if(orientation==='H') boxWire(a0, a1, baseY, baseY+height, c-SLIDE2_LEAF_T/2, c+SLIDE2_LEAF_T/2, mat, edgeMat, grp, 3);
@@ -3234,7 +3234,7 @@ function cleanupHandFields(eff){
   if(eff.operation==='swing' || eff.operation==='fold'){ delete eff.slideDir; delete eff.slideSide; }
   else if(eff.operation==='double-swing' || eff.operation==='double-fold'){ delete eff.hingeSide; delete eff.slideDir; delete eff.slideSide; }
   else if(eff.operation==='slide'){ delete eff.hingeSide; delete eff.swingDir; }
-  else if(eff.operation==='slide-2'){ delete eff.hingeSide; delete eff.swingDir; delete eff.slideSide; }   // 戸は枠の中を走る
+  else if(eff.operation==='slide-2'){ delete eff.hingeSide; delete eff.swingDir; }   // slideSide＝動く戸のレールの側
   else { delete eff.hingeSide; delete eff.swingDir; delete eff.slideDir; delete eff.slideSide; }
   return eff;
 }
@@ -3584,11 +3584,14 @@ function addWalkDoorLeaves({ orientation, alongFrom, alongTo, wallCoord, baseY, 
     return;
   }
   if(operation==='slide-2'){
-    // 2枚引戸（連動）：戸袋から遠い戸は間口の幅だけ、近い戸は半分だけ動いて、戸袋で重なる
+    // 2枚引戸（施工会社の図面）：w は枠の外寸。動く戸（slideSide の側のレール）は間口（slideDir と反対の半分）をふさぎ、
+    // 開けると枠の半分だけ動いて、もう一方のレールに固定された戸と重なる。blender/build_interior.py の slide-2 と同じ
     if(!slideDir) return;
-    const mid = (alongFrom+alongTo)/2, far = slideDir==='L' ? [mid, alongTo] : [alongFrom, mid], near = slideDir==='L' ? [alongFrom, mid] : [mid, alongTo];
-    addWalkSlideLeaf(orientation, far[0], far[1], wallCoord - SLIDE2_TRACK, baseY, height, SLIDE2_LEAF_T, slideDir, level, anchorX, anchorZ, null, w);
-    addWalkSlideLeaf(orientation, near[0], near[1], wallCoord + SLIDE2_TRACK, baseY, height, SLIDE2_LEAF_T, slideDir, level, anchorX, anchorZ, null, w/2);
+    const mid = (alongFrom+alongTo)/2;
+    const moving = slideDir==='L' ? [mid, alongTo] : [alongFrom, mid], fixed = slideDir==='L' ? [alongFrom, mid] : [mid, alongTo];
+    const track = (slideSide==='L' ? -1 : 1) * SLIDE2_TRACK;
+    addWalkSlideLeaf(orientation, moving[0], moving[1], wallCoord + track, baseY, height, SLIDE2_LEAF_T, slideDir, level, anchorX, anchorZ, null, w/2);
+    addWalkSlideLeaf(orientation, fixed[0], fixed[1], wallCoord - track, baseY, height, SLIDE2_LEAF_T, slideDir, level, anchorX, anchorZ, null, 0);
     return;
   }
   if(operation==='double-swing'){
@@ -3793,11 +3796,13 @@ function renderHandControls(eff){
       <div class="hand-label">引き込み方向</div>
       <div class="hand-row"><button data-hand="slideDir" data-val="L" class="${eff.slideDir==='L'?'active':''}">左（L）</button><button data-hand="slideDir" data-val="R" class="${eff.slideDir==='R'?'active':''}">右（R）</button></div>`+(eff.orientation ? `
       <div class="hand-label">戸が走る壁の側</div>
-      <div class="hand-row"><button data-hand="slideSide" data-val="L" class="${eff.slideSide==='L'?'active':''}">${eff.orientation==='H'?'北':'西'}側</button><button data-hand="slideSide" data-val="R" class="${eff.slideSide==='R'?'active':''}">${eff.orientation==='H'?'南':'東'}側</button></div>` : '');
+      <div class="hand-row"><button data-hand="slideSide" data-val="L" class="${eff.slideSide==='L'?'active':''}">${eff.orientation==='H'?'北':'西'}側</button><button data-hand="slideSide" data-val="R" class="${eff.slideSide==='R'?'active':''}">${eff.orientation==='H'?'南':'東'}側</button><button data-hand="slideSide" data-val="P" class="${eff.slideSide==='P'?'active':''}">壁の中（引き込み戸）</button></div>` : '');
   } else if(eff.operation==='slide-2'){
     area.innerHTML = `
-      <div class="hand-label">戸袋の側（2枚が重なって収まる側）</div>
-      <div class="hand-row"><button data-hand="slideDir" data-val="L" class="${eff.slideDir==='L'?'active':''}">左（L）</button><button data-hand="slideDir" data-val="R" class="${eff.slideDir==='R'?'active':''}">右（R）</button></div>`;
+      <div class="hand-label">戸が重なる側（固定の戸がある側）</div>
+      <div class="hand-row"><button data-hand="slideDir" data-val="L" class="${eff.slideDir==='L'?'active':''}">左（L）</button><button data-hand="slideDir" data-val="R" class="${eff.slideDir==='R'?'active':''}">右（R）</button></div>
+      <div class="hand-label">動く戸のレールの側</div>
+      <div class="hand-row"><button data-hand="slideSide" data-val="L" class="${eff.slideSide==='L'?'active':''}">${eff.orientation==='H'?'北':'西'}側</button><button data-hand="slideSide" data-val="R" class="${eff.slideSide==='R'?'active':''}">${eff.orientation==='H'?'南':'東'}側</button></div>`;
   } else if(eff.category==='door'){
     area.innerHTML = `<div class="hand-label">この種類は扉本体がありません（開口のみ）</div>`;
   } else {
@@ -3845,7 +3850,7 @@ function applyDoorTypeChange(newType){
   if(profile.operation==='swing' || profile.operation==='fold'){ patch.hingeSide = 'R'; patch.swingDir = 'in'; }
   else if(profile.operation==='double-swing' || profile.operation==='double-fold'){ patch.swingDir = 'in'; }
   else if(profile.operation==='slide'){ patch.slideDir = 'R'; if(!sel.isExterior) patch.slideSide = 'R'; }
-  else if(profile.operation==='slide-2'){ patch.slideDir = 'R'; }
+  else if(profile.operation==='slide-2'){ patch.slideDir = 'R'; patch.slideSide = 'L'; }
   doorWindowEdits[selectedDoorWindowId] = {...(doorWindowEdits[selectedDoorWindowId]||{}), ...patch};
   saveDoorWindowEdits();
   rebuildDoorWindow(selectedDoorWindowId, sel.isExterior);
