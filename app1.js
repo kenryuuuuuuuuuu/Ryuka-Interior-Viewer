@@ -1427,23 +1427,54 @@ function drawLaundry(group,shape,w,d,h){
   }
 }
 // ---- 玄関・土間・シューズクロークの造作（blender/entry_assets.py と同じ部品レシピ）----
-const ENTRY_SHAPES=['wallHookRail','wallPlankShelf'];
+const ENTRY_SHAPES=['wallHookRail','wallPlankShelf','wallStorage'];
 const ENTRY_LIMITS=Object.fromEntries(ENTRY_SHAPES.map(s=>[s,SHAPE_LIMITS[s]])); // data/shape-limits.json
 const ENTRY_BOARD=.02, ENTRY_PEG_LEN=.07, ENTRY_PEG_W=.022, ENTRY_TIP_RISE=.045, ENTRY_SPACING=.17;
 const ENTRY_RAIL_W=.04, ENTRY_RAIL_D=.025, ENTRY_PLANK_T=.02, ENTRY_PLANK_PITCH=.28, ENTRY_PLANK_FIRST=.28;
+// 造作の壁面収納（2026-11-14、リビング北のくぼみ）。blender/entry_assets.py の wall_storage_parts と同じ
+const STORAGE_LOW=.85, STORAGE_COUNTER=.88, STORAGE_BAND_TOP=1.38, STORAGE_UPPER_TOP=2.20, STORAGE_DOOR_TOP=2.0;
+const STORAGE_SIDE=.02, STORAGE_DOOR_T=.02, STORAGE_GAP=.003, STORAGE_PLINTH=.06;
 function entryPegCount(width){return Math.max(3,Math.min(8,Math.round(width/ENTRY_SPACING)+1));}
-function entryPlankPositions(h){
+function entryPlankPositions(h,heights){
+  // heights（品物の storage.shelfHeights、棚板の下面の高さ）があればそれを使う（2026-11-14、土間の可動棚）
+  if(heights!==undefined && heights!==null){
+    const ok=Array.isArray(heights) && heights.length && heights.every(Number.isFinite) && heights[0]>=0 &&
+      heights[heights.length-1]+ENTRY_PLANK_T<=h+1e-9 && heights.every((y,i)=>!i || y-heights[i-1]>=ENTRY_PLANK_T);
+    if(!ok) throw Error('壁付け板棚の shelfHeights が不正です（0以上・昇順・板厚2cm以上の間隔・最上段が高さに収まること）');
+    return [...heights];
+  }
   const ys=[];let y0=ENTRY_PLANK_FIRST;
   while(y0+ENTRY_PLANK_T<=h+1e-9 && ys.length<6){ys.push(y0);y0+=ENTRY_PLANK_PITCH;}
   if(!ys.length) ys.push(Math.max(0,h-ENTRY_PLANK_T));
   return ys;
 }
-function entryParts(shape,w,d,h){
+// 帯の奥の板を、穴（コンセント・LANのプレート）をよけた箱に分ける。blender/entry_assets.py の band_back_pieces と同じ
+function bandBackPieces(x0,x1,y0,y1,cutouts){
+  const holes=[...cutouts].sort((a,b)=>a[0]-b[0]);
+  for(const hole of holes)
+    if(!Array.isArray(hole) || hole.length!==4 || !hole.every(Number.isFinite) || !(x0<hole[0] && hole[0]<hole[1] && hole[1]<x1 && y0<hole[2] && hole[2]<hole[3] && hole[3]<y1))
+      throw Error('壁面収納の bandCutouts は帯の奥の板の内側に [x0, x1, y0, y1] で書きます');
+  if(holes.some((a,i)=>i<holes.length-1 && a[1]>holes[i+1][0])) throw Error('壁面収納の bandCutouts は横に重ならないこと');
+  const pieces=[]; let left=x0;
+  for(const [hx0,hx1,hy0,hy1] of holes){
+    if(hx0>left) pieces.push([`band-back-${pieces.length+1}`,left,hx0,y0,y1]);
+    pieces.push([`band-back-${pieces.length+1}`,hx0,hx1,y0,hy0]);
+    pieces.push([`band-back-${pieces.length+1}`,hx0,hx1,hy1,y1]);
+    left=hx1;
+  }
+  if(left<x1) pieces.push([holes.length?`band-back-${pieces.length+1}`:'band-back',left,x1,y0,y1]);
+  return pieces;
+}
+function entryParts(shape,w,d,h,options){
   const limits=ENTRY_LIMITS[shape];
   if(!limits || [w,d,h].some((v,i)=>!Number.isFinite(v)||v<limits[i][0]||v>limits[i][1]))
     throw Error('エントリー造作の寸法が対応範囲外です: '+shape);
   const parts=[];
   const box=(name,x0,x1,z0,z1,y0,y1,material,bevel)=>parts.push({name,bounds:[x0,x1,z0,z1,y0,y1],material,kind:'box',bevel});
+  options=options||{};
+  const allowed={wallHookRail:[],wallPlankShelf:['shelfHeights'],wallStorage:['layout','bandCutouts']}[shape];
+  if(typeof options!=='object' || Object.keys(options).some(k=>!allowed.includes(k)))
+    throw Error('この造作の storage に書けない項目があります: '+shape);
   if(shape==='wallHookRail'){
     const boardD=Math.min(ENTRY_BOARD,d*.4);
     box('board',-w/2,w/2,-d/2,-d/2+boardD,0,h,'wood',.004);
@@ -1460,13 +1491,52 @@ function entryParts(shape,w,d,h){
     const railD=Math.min(ENTRY_RAIL_D,d*.3);
     box('rail-left',-w/2,-w/2+ENTRY_RAIL_W,-d/2,-d/2+railD,0,h,'metal',.003);
     box('rail-right',w/2-ENTRY_RAIL_W,w/2,-d/2,-d/2+railD,0,h,'metal',.003);
-    entryPlankPositions(h).forEach((y0,j)=>box(`plank-${j}`,-w/2,w/2,-d/2,d/2,y0,y0+ENTRY_PLANK_T,'wood',.004));
+    entryPlankPositions(h,options.shelfHeights).forEach((y0,j)=>box(`plank-${j}`,-w/2,w/2,-d/2,d/2,y0,y0+ENTRY_PLANK_T,'wood',.004));
+  }else if(shape==='wallStorage'){
+    const layout=options.layout ?? 'threeBand';
+    if(!['threeBand','doubleDoor'].includes(layout)) throw Error('壁面収納の layout は threeBand か doubleDoor です: '+layout);
+    const s=STORAGE_SIDE, t=STORAGE_DOOR_T, x0=-w/2+s, x1=w/2-s, back=-d/2, front=d/2;
+    const doors=(prefix,z0,z1,y0,y1,count,material)=>{
+      const span=(x1-x0)/count;
+      for(let k=0;k<count;k++) box(`${prefix}-${k+1}`,x0+k*span+STORAGE_GAP/2,x0+(k+1)*span-STORAGE_GAP/2,z0,z1,y0,y1,material,.002);
+    };
+    box('side-left',-w/2,x0,back,front,0,h,'wallcream',.002);
+    box('side-right',x1,w/2,back,front,0,h,'wallcream',.002);
+    const cutouts=options.bandCutouts ?? [];
+    if(!Array.isArray(cutouts)) throw Error('壁面収納の bandCutouts は一覧で書きます');
+    if(layout==='doubleDoor'){
+      if(cutouts.length) throw Error('bandCutouts は threeBand（帯のある形）だけで使えます');
+      const top=STORAGE_DOOR_TOP;
+      box('body',x0,x1,back,front-t-.01,0,top,'seam',.002);
+      doors('door',front-t-.01,front-.01,.005,top-.005,2,'cabinet');
+      [-.03,.03].forEach((x,k)=>box(`handle-${k+1}`,x-.006,x+.006,front-.01,front,1.0,1.35,'metal',.002));
+      box('filler',x0,x1,back,front,top,h,'wallcream',.002);
+    }else{
+      const doorFront=front-.01;   // 扉はカウンターの先端から1cm下げる
+      box('plinth',x0,x1,back,doorFront-t-.05,0,STORAGE_PLINTH,'darkwood',.002);
+      box('lower-body',x0,x1,back,doorFront-t,STORAGE_PLINTH,STORAGE_LOW,'seam',.002);
+      doors('lower-door',doorFront-t,doorFront,STORAGE_PLINTH+.005,STORAGE_LOW-.003,3,'wood');
+      box('counter',x0,x1,back,front,STORAGE_LOW,STORAGE_COUNTER,'wood',.003);
+      for(const [name,px0,px1,py0,py1] of bandBackPieces(x0,x1,STORAGE_COUNTER,STORAGE_BAND_TOP,cutouts))
+        box(name,px0,px1,back,back+.012,py0,py1,'darkwood',.001);
+      box('band-light',x0+.02,x1-.02,front-.07,front-.05,STORAGE_BAND_TOP-.012,STORAGE_BAND_TOP,'glow',.001);
+      box('upper-body',x0,x1,back,front-t,STORAGE_BAND_TOP,STORAGE_UPPER_TOP,'seam',.002);
+      doors('upper-door',front-t,front,STORAGE_BAND_TOP+.003,STORAGE_UPPER_TOP-.003,3,'wallcream');
+      box('filler',x0,x1,back,front,STORAGE_UPPER_TOP,h,'wallcream',.002);
+    }
   }
   return parts;
 }
-function drawEntry(group,shape,w,d,h){
-  const materials={wood:FMAT.storageWood,metal:FMAT.metal};
-  for(const spec of entryParts(shape,w,d,h)){
+// 造作の壁面収納の固定色（blender/build_interior.py の storage_materials と同じ）
+const ENTRY_EXTRA_MATS={
+  darkwood:new THREE.MeshStandardMaterial({color:0x5c4433,roughness:.6}),
+  wallcream:new THREE.MeshStandardMaterial({color:0xf2e8d9,roughness:.85}),
+  seam:new THREE.MeshStandardMaterial({color:0xb9ad9b,roughness:.8}),
+  glow:new THREE.MeshStandardMaterial({color:0xfff1d6,emissive:0xffd8a0,emissiveIntensity:.9,roughness:.5}),
+};
+function drawEntry(group,shape,w,d,h,options){
+  const materials={wood:FMAT.storageWood,metal:FMAT.metal,cabinet:FMAT.white,...ENTRY_EXTRA_MATS};
+  for(const spec of entryParts(shape,w,d,h,options)){
     const [x0,x1,z0,z1,y0,y1]=spec.bounds;
     fPart(group,x1-x0,y1-y0,z1-z0,(x0+x1)/2,y0,(z0+z1)/2,materials[spec.material]).name=spec.name;
   }
@@ -1492,7 +1562,7 @@ function validateFurnitureShapeDims(shape,w,d,h,storage){
     if(shape==='wq19Sofa') wq19Settings(w,d,h);
     if(STORAGE_SHAPES.includes(shape)) storageSettings(shape,w,d,h,storage);
     else if(LAUNDRY_SHAPES.includes(shape)) laundryParts(shape,w,d,h);
-    else if(ENTRY_SHAPES.includes(shape)) entryParts(shape,w,d,h);
+    else if(ENTRY_SHAPES.includes(shape)) entryParts(shape,w,d,h,storage);   // 板棚の段（shelfHeights）が高さに収まるかも見る
     return null;
   }catch(e){ return e.message; }
 }
@@ -2164,7 +2234,8 @@ const FURNITURE_SHAPES = {
   laundryRack(group,w,d,h){drawLaundry(group,'laundryRack',w,d,h);},
   laundryBasket(group,w,d,h){drawLaundry(group,'laundryBasket',w,d,h);},
   wallHookRail(group,w,d,h){drawEntry(group,'wallHookRail',w,d,h);},
-  wallPlankShelf(group,w,d,h){drawEntry(group,'wallPlankShelf',w,d,h);},
+  wallPlankShelf(group,w,d,h,storage){drawEntry(group,'wallPlankShelf',w,d,h,storage);},
+  wallStorage(group,w,d,h,storage){drawEntry(group,'wallStorage',w,d,h,storage);},
   shelf(group,w,d,h){
     fPart(group, w,h,0.04, 0,0,-d*0.45, FMAT.wood); // 背板
     fPart(group, 0.04,h,d, -w*0.47,0,0, FMAT.wood); // 側板
