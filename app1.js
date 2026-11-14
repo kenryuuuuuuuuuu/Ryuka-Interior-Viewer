@@ -2552,6 +2552,8 @@ function refreshProductControls(){
     if(!spec) continue;
     let rows;
     try{ rows=spec(effectiveFurniture(item)); }catch(e){ continue; }
+    rows=rows.filter(row=>row.options.length>1);   // 選べるものがない行・製品は出さない（2026-11-14 造作の洗面・ふかし壁）
+    if(!rows.length) continue;
     const wrap=document.createElement('div');
     const title=document.createElement('div'); title.textContent=(item.label||item.type)+(item.purchased?'（購入済み・固定）':''); title.style.fontWeight='600'; title.style.margin='6px 0 2px';
     wrap.appendChild(title);
@@ -3872,6 +3874,17 @@ function pendantMaterial(shapeName, role, spec){
   return PENDANT_MATERIALS.get(key);
 }
 const PENDANT_UP = new THREE.Vector3(0, 1, 0);
+// 壁付けの設備が付く壁の厚みの半分（内壁なら INTERIOR_WALL_T、外壁なら WALL_T）。blender/electrical_assets.py の wall_thickness_at と同じ
+function wallHalfThicknessAt(item){
+  const interior = WALLS.some(w=>w.level===item.level && w.orientation===item.orientation &&
+    Math.abs((w.orientation==='H' ? w.z0 : w.x0) - item.wallAt) < 1e-6 &&
+    (w.orientation==='H' ? w.x0 : w.z0) - 1e-6 <= item.center && item.center <= (w.orientation==='H' ? w.x1 : w.z1) + 1e-6);
+  return (interior ? INTERIOR_WALL_T : WALL_T) / 2;
+}
+// 壁付けの設備を壁の芯から部屋の側へずらす量（符号つき）。insetがなければ0（従来どおり芯）
+function electricalInset(item){
+  return item.inset ? (wallHalfThicknessAt(item) + item.inset) * item.side : 0;
+}
 function pendantFromRecipe(group, shapeName, item){
   const recipe = PENDANT_SHAPES[shapeName];
   const mat = role=>pendantMaterial(shapeName, role, recipe.materials[role] || recipe.materials.shade || {color:'888888', rough:0.6, metal:0, glow:0});
@@ -3882,6 +3895,9 @@ function pendantFromRecipe(group, shapeName, item){
     m.quaternion.setFromUnitVectors(PENDANT_UP, dir.normalize());
     group.add(m);
   };
+  // 壁付けの形（mount:'wall'、2026-11-14 洗面の真鍮のブラケット）：原点は壁の面。holderは壁の芯にあるので壁の厚みの半分だけ前へ出す
+  const target = group;
+  if(recipe.mount === 'wall'){ group = new THREE.Group(); group.position.z = wallHalfThicknessAt(item); target.add(group); }
   for(const part of recipe.parts){
     if(part.kind === 'lathe'){
       const m = new THREE.Mesh(new THREE.LatheGeometry(part.profile.map(([r, y])=>new THREE.Vector2(r, y)), 56), mat(part.role));
@@ -3889,6 +3905,7 @@ function pendantFromRecipe(group, shapeName, item){
       group.add(m);
     }else tubeBetween(part.from, part.to, part.r, part.role);
   }
+  if(recipe.mount === 'wall') return;   // コードも天井のカバーもない
   // ceilingDrop：レールから下げる形は、コードが天井でなくレールの下面（天井からその分下）で終わる
   const [ax, ay, az] = recipe.attach, drop = item.mountHeight - (recipe.ceilingDrop || 0);
   tubeBetween([ax, ay, az], [ax, drop, az], recipe.cord.r, recipe.cord.role);
@@ -4099,8 +4116,11 @@ function placeElectricalItem(item){
   const baseY = item.level===1 ? LEVELS.fl1 : LEVELS.fl2;
   let alongX, alongZ, rotY = 0;
   if(item.mount === 'wall'){
-    alongX = item.orientation==='H' ? item.center : item.wallAt;
-    alongZ = item.orientation==='H' ? item.wallAt : item.center;
+    // inset（2026-11-14）：ふかし壁・造作の前に付けるとき、壁の面から部屋の側へ出す距離（m）。
+    // ブラウザの壁は芯に描くので、プレートもふだんは芯にある。insetがあるときは壁の厚みの半分も足して、ふかし壁の面に出す
+    const inset = electricalInset(item);
+    alongX = item.orientation==='H' ? item.center : item.wallAt + inset;
+    alongZ = item.orientation==='H' ? item.wallAt + inset : item.center;
     // orientation(壁の向き)+side(壁のどちら側を向くか)からrotation.yを導出する。
     // boxWireRotated()等と同じ規約：rotation.y=θはローカル+Zをワールド(sinθ,cosθ)方向に向ける
     rotY = item.orientation==='H'
@@ -4149,8 +4169,9 @@ function repositionElectricalItem(id){
   const groupY = electricalGroupY(eff, baseY);
   let alongX, alongZ;
   if(eff.mount === 'wall'){
-    alongX = eff.orientation==='H' ? eff.center : eff.wallAt;
-    alongZ = eff.orientation==='H' ? eff.wallAt : eff.center;
+    const inset = electricalInset(eff);   // placeElectricalItem と同じ
+    alongX = eff.orientation==='H' ? eff.center : eff.wallAt + inset;
+    alongZ = eff.orientation==='H' ? eff.wallAt + inset : eff.center;
   } else if(eff.mount === 'ceiling' || eff.mount === 'floor'){
     alongX = eff.x; alongZ = eff.z;
   }
@@ -4680,6 +4701,7 @@ function buildElectricalPayload(){
     const out = { id: base.id, type: eff.type, level: base.level };
     if(eff.mount === 'wall'){
       out.wallAt = eff.wallAt; out.orientation = eff.orientation; out.center = round2(eff.center); out.side = eff.side;
+      if(base.inset !== undefined) out.inset = base.inset;   // ふかし壁の面に付ける距離（ブラウザでは編集しない）
     } else if(eff.mount === 'exterior'){
       out.face = eff.face; out.offset = round2(eff.offset);
       if(eff.wallX !== undefined) out.wallX = eff.wallX;
