@@ -1298,10 +1298,75 @@ function applyFurnitureColors(group,roles,colors,fallbacks={}){
     o.material=furnitureColorMats.get(key);
   });
 }
-const STORAGE_SHAPES=['closetSingle','closetDouble','closetShelves','closetDrawers','closetMirror','storageBox'];
+const STORAGE_SHAPES=['closetSingle','closetDouble','closetShelves','closetDrawers','closetMirror','storageBox','closetOpen'];
+// 壁付けの枕棚＋ハンガーパイプ（closetOpen、2026-11-14 ファミリークローク）。blender/storage_assets.py の open_settings・open_closet_parts と同じ
+const OPEN_SHELF_T=.025, OPEN_TOP_SPACE=.30, OPEN_PIPE_FROM_WALL=.30, OPEN_POST_GAP=.9;
+function openClosetSettings(w,d,h,options){
+  options=options??{};
+  if(typeof options!=='object' || Array.isArray(options) || Object.keys(options).some(k=>!['rails','floorBoxes','contents'].includes(k)))
+    throw Error('壁付けハンガーの storage は rails・floorBoxes・contents だけ書けます');
+  const r3=v=>Math.round(v*1000)/1000, shelfTop=Math.round((h-OPEN_TOP_SPACE)*1e6)/1e6;
+  const rails=options.rails ?? [[r3(shelfTop-.10),r3(-w/2+.05),r3(w/2-.05)]];
+  if(!Array.isArray(rails) || rails.some(r=>!Array.isArray(r) || r.length!==3 || !r.every(Number.isFinite)))
+    throw Error('壁付けハンガーの rails は [高さ, x0, x1] の一覧です');
+  for(const [y,x0,x1] of rails)
+    if(!(y>=.45 && y<=shelfTop-.06 && -w/2-1e-9<=x0 && x1<=w/2+1e-9 && x1-x0>=.3)) throw Error('壁付けハンガーのパイプが範囲外です（高さ0.45m〜枕棚の6cm下、長さ0.3m以上）');
+  if(rails.length && d<OPEN_PIPE_FROM_WALL*2-1e-9) throw Error('パイプのある壁付けハンガーは奥行き0.60m以上（服の幅）にしてください');
+  rails.forEach((a,i)=>rails.slice(i+1).forEach(b=>{
+    if(Math.min(a[2],b[2])-Math.max(a[1],b[1])>1e-9 && Math.abs(a[0]-b[0])<.65-1e-6) throw Error('上下に重なるパイプは65cm以上離してください');
+  }));
+  const boxes=options.floorBoxes ?? [];
+  if(!Array.isArray(boxes) || boxes.some(x=>!Number.isFinite(x) || Math.abs(x)>w/2-.175+1e-9)) throw Error('壁付けハンガーの floorBoxes は品物の中の箱の中心xの一覧です');
+  if(boxes.length && d<.42) throw Error('床の箱（奥行き0.40m）は奥行き0.42m以上の壁付けハンガーだけに置けます');
+  const contents=options.contents ?? true;
+  if(typeof contents!=='boolean') throw Error('収納物表示は真偽値で指定してください');
+  return {rails,floorBoxes:boxes,contents,shelfTop};
+}
+function openClosetParts(w,d,h,options){
+  const cfg=openClosetSettings(w,d,h,options),parts=[];
+  const box=(name,x0,x1,z0,z1,y0,y1,material='cabinet',kind='box')=>parts.push({name,bounds:[x0,x1,z0,z1,y0,y1],material,kind,bevel:Math.min(.003,(x1-x0)/4,(z1-z0)/4,(y1-y0)/4)});
+  const container=(prefix,x,z,bottom,bw,bd,bh)=>{
+    box(prefix+'-body',x-bw/2,x+bw/2,z-bd/2,z+bd/2,bottom,bottom+bh-.012,'fabric');
+    box(prefix+'-lid',x-bw/2,x+bw/2,z-bd/2,z+bd/2,bottom+bh-.012,bottom+bh,'cabinet');
+    box(prefix+'-label',x-bw*.18,x+bw*.18,z+bd/2,z+bd/2+.001,bottom+bh*.5,bottom+bh*.7,'metal');
+  };
+  const back=-d/2, top=cfg.shelfTop, t=OPEN_SHELF_T, rails=cfg.rails;
+  const n=Math.max(2,Math.ceil((w-.1)/OPEN_POST_GAP-1e-9)+1);
+  const posts=Array.from({length:n},(_,k)=>-w/2+.05+k*(w-.1)/(n-1));
+  const postY0=rails.length ? Math.max(0,Math.min(...rails.map(r=>r[0]))-.10) : Math.max(0,top-t-.30);
+  posts.forEach((x,k)=>{
+    box(`post-${k}`,x-.0125,x+.0125,back,back+.012,postY0,top-t,'metal');
+    box(`bracket-${k}`,x-.006,x+.006,back+.012,d/2-.03,top-t-.03,top-t,'metal');
+  });
+  box('shelf',-w/2,w/2,back,d/2,top-t,top,'wood');
+  const pz=back+OPEN_PIPE_FROM_WALL;
+  rails.forEach(([y,x0,x1],j)=>{
+    box(`pipe-${j}`,x0,x1,pz-.014,pz+.014,y-.014,y+.014,'metal','cylinderX');
+    const holders=[x0+.03,...posts.filter(x=>x0+.06<x && x<x1-.06),x1-.03];
+    holders.forEach((x,k)=>box(`pipe-${j}-holder-${k}`,x-.006,x+.006,back+.012,pz-.014,y-.006,y+.006,'metal'));
+    if(cfg.contents){
+      const count=Math.floor((x1-x0-.08)/.14+1e-9)+1;
+      for(let k=0;k<count;k++){
+        const x=x0+.04+k*.14;
+        const below=rails.filter(r=>r[0]<y && r[1]<=x && x<=r[2]).map(r=>r[0]);
+        const length=Math.min(y>1.4?1.0:.6, below.length ? y-Math.max(...below)-.12 : y-.15);
+        box(`hanger-${j}-${k}`,x-.006,x+.006,pz-.21,pz+.21,y-.06,y-.052,'metal');
+        box(`garment-${j}-${k}`,x-.018,x+.018,pz-.2,pz+.2,y-.06-length,y-.09,'fabric');
+        box(`shoulder-${j}-${k}`,x-.018,x+.018,pz-.27,pz+.27,y-.22,y-.09,'fabric');
+      }
+    }
+  });
+  if(cfg.contents){
+    const bd=Math.min(.38,d-.06);
+    for(let k=0;k<Math.floor((w-.1)/.6+1e-9);k++){ const x=-w/2+.05+.3+k*.6; container(`shelf-box-${k}`,x,back+.03+bd/2,top,.36,bd,.25); }
+    cfg.floorBoxes.forEach((x,k)=>container(`floor-box-${k}`,x,back+.02+.2,0,.35,.4,.25));
+  }
+  return parts;
+}
 function storageSettings(shape,w,d,h,options={}){
   const limits=SHAPE_LIMITS; // data/shape-limits.json（Python側と共通）
   if(!STORAGE_SHAPES.includes(shape) || !limits[shape] || [w,d,h].some((v,i)=>!Number.isFinite(v)||v<limits[shape][i][0]||v>limits[shape][i][1])) throw Error('収納家具の寸法が対応範囲外です');
+  if(shape==='closetOpen') return openClosetSettings(w,d,h,options);
   if(!options || typeof options!=='object' || Array.isArray(options) || Object.keys(options).some(k=>!['railHeights','shelfHeights','contents'].includes(k))) throw Error('収納設定の項目が不正です');
   const round=v=>Math.round(v*1000)/1000;
   const rails=options.railHeights ?? (shape==='closetSingle'?[round(h-.35)]:shape==='closetDouble'?[round(h*.45),round(h-.25)]:[]);
@@ -1319,6 +1384,7 @@ function storageSettings(shape,w,d,h,options={}){
 }
 function storageParts(shape,w,d,h,options){
   const cfg=storageSettings(shape,w,d,h,options),parts=[];
+  if(shape==='closetOpen') return openClosetParts(w,d,h,options);
   const box=(name,x0,x1,z0,z1,y0,y1,material='cabinet',kind='box')=>parts.push({name,bounds:[x0,x1,z0,z1,y0,y1],material,kind,bevel:Math.min(.003,(x1-x0)/4,(z1-z0)/4,(y1-y0)/4)});
   function container(prefix,x,z,bottom,bw,bd,bh){
     box(prefix+'-body',x-bw/2,x+bw/2,z-bd/2,z+bd/2,bottom,bottom+bh-.012,'fabric');
@@ -2081,6 +2147,7 @@ const FURNITURE_SHAPES = {
   closetDrawers(g,w,d,h,o){drawStorage(g,'closetDrawers',w,d,h,o);},
   closetMirror(g,w,d,h,o){drawStorage(g,'closetMirror',w,d,h,o);},
   storageBox(g,w,d,h,o){drawStorage(g,'storageBox',w,d,h,o);},
+  closetOpen(g,w,d,h,o){drawStorage(g,'closetOpen',w,d,h,o);},
   raisedPlatform(group,w,d,h){
     fPart(group,w*.96,h*.9,d*.96,0,0,0,FMAT.wood);
     fPart(group,w,h*.1,d,0,h*.9,0,FMAT.wood);
@@ -2444,12 +2511,14 @@ function updateFurniturePanel(){
   document.getElementById('fpStorage').style.display=isStorage ? '' : 'none';
   if(isStorage){
     const cfg=storageSettings(shape,eff.width,eff.depth,eff.height,eff.storage);
-    document.getElementById('fpRailsLabel').style.display=cfg.railHeights.length ? '' : 'none';
-    document.getElementById('fpShelvesLabel').style.display=cfg.shelfHeights.length ? '' : 'none';
-    document.getElementById('fpRails').value=cfg.railHeights.join(', ');
-    document.getElementById('fpShelves').value=cfg.shelfHeights.join(', ');
+    // 壁付けハンガー（closetOpen）のパイプの範囲はデータで書く（ここでは見本の表示だけ切り替える）
+    const railHeights=cfg.railHeights||[], shelfHeights=cfg.shelfHeights||[];
+    document.getElementById('fpRailsLabel').style.display=railHeights.length ? '' : 'none';
+    document.getElementById('fpShelvesLabel').style.display=shelfHeights.length ? '' : 'none';
+    document.getElementById('fpRails').value=railHeights.join(', ');
+    document.getElementById('fpShelves').value=shelfHeights.join(', ');
     document.getElementById('fpContents').checked=cfg.contents;
-    document.getElementById('fpContentsLabel').style.display=(cfg.railHeights.length||cfg.shelfHeights.length) ? '' : 'none';
+    document.getElementById('fpContentsLabel').style.display=(railHeights.length||shelfHeights.length||shape==='closetOpen') ? '' : 'none';
   }
   panel.style.display = 'block';
 }
@@ -2657,7 +2726,7 @@ function applyStorageEdit(){
   const shape=FURNITURE_CATALOG[eff.type].shape;
   if(!STORAGE_SHAPES.includes(shape)) return;
   const list=id=>document.getElementById(id).value.trim().split(/[,、\s]+/).filter(Boolean).map(Number);
-  const options={contents:document.getElementById('fpContents').checked};
+  const options={...(shape==='closetOpen' ? (eff.storage||{}) : {}),contents:document.getElementById('fpContents').checked};
   if(shape==='closetSingle'||shape==='closetDouble') options.railHeights=list('fpRails');
   if(shape==='closetShelves') options.shelfHeights=list('fpShelves');
   try{storageSettings(shape,eff.width,eff.depth,eff.height,options);}
