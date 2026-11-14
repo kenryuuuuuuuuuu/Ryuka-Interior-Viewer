@@ -1298,7 +1298,42 @@ function applyFurnitureColors(group,roles,colors,fallbacks={}){
     o.material=furnitureColorMats.get(key);
   });
 }
-const STORAGE_SHAPES=['closetSingle','closetDouble','closetShelves','closetDrawers','closetMirror','storageBox','closetOpen'];
+const STORAGE_SHAPES=['closetSingle','closetDouble','closetShelves','closetDrawers','closetMirror','storageBox','closetOpen','ceilingPipe'];
+// 天井吊りの黒いハンガーパイプ（ceilingPipe、2026-11-14 脱衣室の物干し）。blender/storage_assets.py の pipe_settings・ceiling_pipe_parts と同じ
+const PIPE_R=.0125, PIPE_ROD=.005, PIPE_PLATE=.03, PIPE_ROD_GAP=.9, PIPE_SPACING=.12;
+function ceilingPipeSettings(w,d,h,options){
+  options=options??{};
+  if(typeof options!=='object' || Array.isArray(options) || Object.keys(options).some(k=>!['drop','contents'].includes(k)))
+    throw Error('天井吊りのハンガーパイプの storage は drop・contents だけ書けます');
+  const drop=options.drop ?? .5;
+  if(!Number.isFinite(drop) || drop<.15 || drop>h-.05) throw Error('ハンガーパイプの drop（天井からパイプまで）は0.15m〜品物の高さの範囲です');
+  const contents=options.contents ?? false;
+  if(typeof contents!=='boolean') throw Error('収納物表示は真偽値で指定してください');
+  const y=h-drop;
+  if(contents && y-.06-.9 < -1e-9) throw Error('干した服の見本（丈0.9m）が品物の下端より下に出ます。品物を床の方へ伸ばしてください');
+  return {drop,contents,pipeY:y};
+}
+function ceilingPipeParts(w,d,h,options){
+  const cfg=ceilingPipeSettings(w,d,h,options),parts=[];
+  const box=(name,x0,x1,z0,z1,y0,y1,material='cabinet',kind='box')=>parts.push({name,bounds:[x0,x1,z0,z1,y0,y1],material,kind,bevel:Math.min(.003,(x1-x0)/4,(z1-z0)/4,(y1-y0)/4)});
+  const y=cfg.pipeY, n=Math.max(2,Math.ceil((w-.1)/PIPE_ROD_GAP-1e-9)+1);
+  for(let k=0;k<n;k++){
+    const x=-w/2+.05+k*(w-.1)/(n-1);
+    box(`plate-${k}`,x-PIPE_PLATE,x+PIPE_PLATE,-PIPE_PLATE,PIPE_PLATE,h-.012,h,'black');
+    box(`rod-${k}`,x-PIPE_ROD,x+PIPE_ROD,-PIPE_ROD,PIPE_ROD,y+PIPE_R,h-.012,'black');
+  }
+  box('pipe',-w/2,w/2,-PIPE_R,PIPE_R,y-PIPE_R,y+PIPE_R,'black','cylinderX');
+  if(cfg.contents){
+    const half=Math.min(.27,d/2);
+    for(let k=0;k<Math.floor((w-.12)/PIPE_SPACING+1e-9)+1;k++){
+      const x=-w/2+.06+k*PIPE_SPACING;
+      box(`hanger-${k}`,x-.006,x+.006,-half*.78,half*.78,y-.06,y-.052,'metal');
+      box(`garment-${k}`,x-.018,x+.018,-half*.74,half*.74,y-.06-.9,y-.09,'fabric');
+      box(`shoulder-${k}`,x-.018,x+.018,-half,half,y-.22,y-.09,'fabric');
+    }
+  }
+  return parts;
+}
 // 壁付けの枕棚＋ハンガーパイプ（closetOpen、2026-11-14 ファミリークローク）。blender/storage_assets.py の open_settings・open_closet_parts と同じ
 const OPEN_SHELF_T=.025, OPEN_TOP_SPACE=.30, OPEN_PIPE_FROM_WALL=.30, OPEN_POST_GAP=.9;
 function openClosetSettings(w,d,h,options){
@@ -1367,6 +1402,7 @@ function storageSettings(shape,w,d,h,options={}){
   const limits=SHAPE_LIMITS; // data/shape-limits.json（Python側と共通）
   if(!STORAGE_SHAPES.includes(shape) || !limits[shape] || [w,d,h].some((v,i)=>!Number.isFinite(v)||v<limits[shape][i][0]||v>limits[shape][i][1])) throw Error('収納家具の寸法が対応範囲外です');
   if(shape==='closetOpen') return openClosetSettings(w,d,h,options);
+  if(shape==='ceilingPipe') return ceilingPipeSettings(w,d,h,options);
   if(!options || typeof options!=='object' || Array.isArray(options) || Object.keys(options).some(k=>!['railHeights','shelfHeights','contents'].includes(k))) throw Error('収納設定の項目が不正です');
   const round=v=>Math.round(v*1000)/1000;
   const rails=options.railHeights ?? (shape==='closetSingle'?[round(h-.35)]:shape==='closetDouble'?[round(h*.45),round(h-.25)]:[]);
@@ -1385,6 +1421,7 @@ function storageSettings(shape,w,d,h,options={}){
 function storageParts(shape,w,d,h,options){
   const cfg=storageSettings(shape,w,d,h,options),parts=[];
   if(shape==='closetOpen') return openClosetParts(w,d,h,options);
+  if(shape==='ceilingPipe') return ceilingPipeParts(w,d,h,options);
   const box=(name,x0,x1,z0,z1,y0,y1,material='cabinet',kind='box')=>parts.push({name,bounds:[x0,x1,z0,z1,y0,y1],material,kind,bevel:Math.min(.003,(x1-x0)/4,(z1-z0)/4,(y1-y0)/4)});
   function container(prefix,x,z,bottom,bw,bd,bh){
     box(prefix+'-body',x-bw/2,x+bw/2,z-bd/2,z+bd/2,bottom,bottom+bh-.012,'fabric');
@@ -1433,8 +1470,9 @@ function storageParts(shape,w,d,h,options){
   }
   return parts;
 }
+const STORAGE_BLACK=new THREE.MeshStandardMaterial({color:0x2a2a2a,roughness:.45,metalness:.5});   // 黒い鉄のパイプ（blender/build_interior.py の IronBlack と同じ色）
 function drawStorage(group,shape,w,d,h,options){
-  const materials={wood:FMAT.storageWood,cabinet:FMAT.white,fabric:FMAT.storageFabric,metal:FMAT.metal,mirror:FMAT.mirror};
+  const materials={wood:FMAT.storageWood,cabinet:FMAT.white,fabric:FMAT.storageFabric,metal:FMAT.metal,mirror:FMAT.mirror,black:STORAGE_BLACK};
   for(const spec of storageParts(shape,w,d,h,options)){
     const [x0,x1,z0,z1,y0,y1]=spec.bounds;
     let mesh;
@@ -2148,6 +2186,7 @@ const FURNITURE_SHAPES = {
   closetMirror(g,w,d,h,o){drawStorage(g,'closetMirror',w,d,h,o);},
   storageBox(g,w,d,h,o){drawStorage(g,'storageBox',w,d,h,o);},
   closetOpen(g,w,d,h,o){drawStorage(g,'closetOpen',w,d,h,o);},
+  ceilingPipe(g,w,d,h,o){drawStorage(g,'ceilingPipe',w,d,h,o);},
   raisedPlatform(group,w,d,h){
     fPart(group,w*.96,h*.9,d*.96,0,0,0,FMAT.wood);
     fPart(group,w,h*.1,d,0,h*.9,0,FMAT.wood);
@@ -2518,7 +2557,7 @@ function updateFurniturePanel(){
     document.getElementById('fpRails').value=railHeights.join(', ');
     document.getElementById('fpShelves').value=shelfHeights.join(', ');
     document.getElementById('fpContents').checked=cfg.contents;
-    document.getElementById('fpContentsLabel').style.display=(railHeights.length||shelfHeights.length||shape==='closetOpen') ? '' : 'none';
+    document.getElementById('fpContentsLabel').style.display=(railHeights.length||shelfHeights.length||shape==='closetOpen'||shape==='ceilingPipe') ? '' : 'none';
   }
   panel.style.display = 'block';
 }
@@ -2726,7 +2765,7 @@ function applyStorageEdit(){
   const shape=FURNITURE_CATALOG[eff.type].shape;
   if(!STORAGE_SHAPES.includes(shape)) return;
   const list=id=>document.getElementById(id).value.trim().split(/[,、\s]+/).filter(Boolean).map(Number);
-  const options={...(shape==='closetOpen' ? (eff.storage||{}) : {}),contents:document.getElementById('fpContents').checked};
+  const options={...((shape==='closetOpen'||shape==='ceilingPipe') ? (eff.storage||{}) : {}),contents:document.getElementById('fpContents').checked};
   if(shape==='closetSingle'||shape==='closetDouble') options.railHeights=list('fpRails');
   if(shape==='closetShelves') options.shelfHeights=list('fpShelves');
   try{storageSettings(shape,eff.width,eff.depth,eff.height,options);}
@@ -3086,6 +3125,8 @@ function drawFoldLeaf({ orientation, hingeAt, alongSign, wallCoord, baseY, openS
 // 引き戸は壁の片側の面を走る（data/interior-doors.json の slideSide。L＝座標の小さい側＝西・北、R＝大きい側＝東・南）。
 // 指定のない外部の引き戸は今までどおり壁の線の上に描く
 const slideSideOffset = side => side==='L' ? -.06 : side==='R' ? .06 : 0;
+// 2枚引戸（slide-2）の2本のレールの位置（壁の芯から）と戸の厚み。blender/build_interior.py の slide-2 と同じ
+const SLIDE2_TRACK = .016, SLIDE2_LEAF_T = .022;
 function addDoorLeaf({ orientation, alongFrom, alongTo, wallCoord, baseY, height, operation, hingeSide, swingDir, slideDir, slideSide, outSign=1, mat, edgeMat, grp }){
   const thick = 0.04;
   const w = alongTo - alongFrom;
@@ -3095,6 +3136,18 @@ function addDoorLeaf({ orientation, alongFrom, alongTo, wallCoord, baseY, height
     const a0 = alongFrom + shiftSign*w, a1 = alongTo + shiftSign*w, c = wallCoord + slideSideOffset(slideSide);
     if(orientation==='H') boxWire(a0, a1, baseY, baseY+height, c-thick/2, c+thick/2, mat, edgeMat, grp, 3);
     else boxWire(c-thick/2, c+thick/2, baseY, baseY+height, a0, a1, mat, edgeMat, grp, 3);
+    return;
+  }
+  if(operation==='slide-2'){
+    // 浴室の2枚引戸（連動、2026-11-14）：開けた状態＝2枚が間口の横（slideDir の側）の戸袋（間口の半分）に重なる。
+    // 戸は枠（壁の厚み）の中の2本のレールを走る（壁の面には出ない）
+    if(!slideDir) return;
+    const a0 = slideDir==='L' ? alongFrom - w/2 : alongTo, a1 = a0 + w/2;
+    for(const track of [-SLIDE2_TRACK, SLIDE2_TRACK]){
+      const c = wallCoord + track;
+      if(orientation==='H') boxWire(a0, a1, baseY, baseY+height, c-SLIDE2_LEAF_T/2, c+SLIDE2_LEAF_T/2, mat, edgeMat, grp, 3);
+      else boxWire(c-SLIDE2_LEAF_T/2, c+SLIDE2_LEAF_T/2, baseY, baseY+height, a0, a1, mat, edgeMat, grp, 3);
+    }
     return;
   }
   if(operation==='double-swing'){
@@ -3181,6 +3234,7 @@ function cleanupHandFields(eff){
   if(eff.operation==='swing' || eff.operation==='fold'){ delete eff.slideDir; delete eff.slideSide; }
   else if(eff.operation==='double-swing' || eff.operation==='double-fold'){ delete eff.hingeSide; delete eff.slideDir; delete eff.slideSide; }
   else if(eff.operation==='slide'){ delete eff.hingeSide; delete eff.swingDir; }
+  else if(eff.operation==='slide-2'){ delete eff.hingeSide; delete eff.swingDir; delete eff.slideSide; }   // 戸は枠の中を走る
   else { delete eff.hingeSide; delete eff.swingDir; delete eff.slideDir; delete eff.slideSide; }
   return eff;
 }
@@ -3498,8 +3552,9 @@ function addWalkFoldLeaf(orientation, hingeAt, alongSign, wallCoord, baseY, heig
   });
 }
 // 引き戸1枚の扉本体を作る（沿い方向にスライドして開閉する）
-function addWalkSlideLeaf(orientation, alongFrom, alongTo, wallCoord, baseY, height, thick, slideDir, level, anchorX, anchorZ, slideSide){
+function addWalkSlideLeaf(orientation, alongFrom, alongTo, wallCoord, baseY, height, thick, slideDir, level, anchorX, anchorZ, slideSide, travel){
   const w = alongTo - alongFrom;
+  travel = travel ?? w;   // 開けたときに動く距離（片引き戸は戸の幅。2枚引戸は戸ごとに違う）
   const alongCenter = (alongFrom+alongTo)/2;
   const geo = orientation==='H' ? new THREE.BoxGeometry(w, height, thick) : new THREE.BoxGeometry(thick, height, w);
   const mesh = new THREE.Mesh(geo, walkDoorMat);
@@ -3513,19 +3568,27 @@ function addWalkSlideLeaf(orientation, alongFrom, alongTo, wallCoord, baseY, hei
   walkGroup.add(group);
   const shiftSign = slideDir==='L' ? -1 : 1;
   walkDoorAnimators.push({
-    group, kind:'slide', orientation, baseX:sx, baseZ:sz, closedOffset:0, openOffset:shiftSign*w,
+    group, kind:'slide', orientation, baseX:sx, baseZ:sz, closedOffset:0, openOffset:shiftSign*travel,
     level, anchorX, anchorZ, t:0,
   });
 }
 // addDoorLeaf()と同じoperation別の分岐で、内覧モード用の実体を追加する
 function addWalkDoorLeaves({ orientation, alongFrom, alongTo, wallCoord, baseY, height, operation, hingeSide, swingDir, slideDir, slideSide, outSign=1, level }){
-  if(!['swing','fold','double-swing','double-fold','slide'].includes(operation)) return; // open系・窓は扉本体なし
+  if(!['swing','fold','double-swing','double-fold','slide','slide-2'].includes(operation)) return; // open系・窓は扉本体なし
   const w = alongTo - alongFrom;
   const thick = 0.04;
   const [anchorX, anchorZ] = orientation==='H' ? [(alongFrom+alongTo)/2, wallCoord] : [wallCoord, (alongFrom+alongTo)/2];
   if(operation==='slide'){
     if(!slideDir) return;
     addWalkSlideLeaf(orientation, alongFrom, alongTo, wallCoord, baseY, height, thick, slideDir, level, anchorX, anchorZ, slideSide);
+    return;
+  }
+  if(operation==='slide-2'){
+    // 2枚引戸（連動）：戸袋から遠い戸は間口の幅だけ、近い戸は半分だけ動いて、戸袋で重なる
+    if(!slideDir) return;
+    const mid = (alongFrom+alongTo)/2, far = slideDir==='L' ? [mid, alongTo] : [alongFrom, mid], near = slideDir==='L' ? [alongFrom, mid] : [mid, alongTo];
+    addWalkSlideLeaf(orientation, far[0], far[1], wallCoord - SLIDE2_TRACK, baseY, height, SLIDE2_LEAF_T, slideDir, level, anchorX, anchorZ, null, w);
+    addWalkSlideLeaf(orientation, near[0], near[1], wallCoord + SLIDE2_TRACK, baseY, height, SLIDE2_LEAF_T, slideDir, level, anchorX, anchorZ, null, w/2);
     return;
   }
   if(operation==='double-swing'){
@@ -3731,6 +3794,10 @@ function renderHandControls(eff){
       <div class="hand-row"><button data-hand="slideDir" data-val="L" class="${eff.slideDir==='L'?'active':''}">左（L）</button><button data-hand="slideDir" data-val="R" class="${eff.slideDir==='R'?'active':''}">右（R）</button></div>`+(eff.orientation ? `
       <div class="hand-label">戸が走る壁の側</div>
       <div class="hand-row"><button data-hand="slideSide" data-val="L" class="${eff.slideSide==='L'?'active':''}">${eff.orientation==='H'?'北':'西'}側</button><button data-hand="slideSide" data-val="R" class="${eff.slideSide==='R'?'active':''}">${eff.orientation==='H'?'南':'東'}側</button></div>` : '');
+  } else if(eff.operation==='slide-2'){
+    area.innerHTML = `
+      <div class="hand-label">戸袋の側（2枚が重なって収まる側）</div>
+      <div class="hand-row"><button data-hand="slideDir" data-val="L" class="${eff.slideDir==='L'?'active':''}">左（L）</button><button data-hand="slideDir" data-val="R" class="${eff.slideDir==='R'?'active':''}">右（R）</button></div>`;
   } else if(eff.category==='door'){
     area.innerHTML = `<div class="hand-label">この種類は扉本体がありません（開口のみ）</div>`;
   } else {
@@ -3778,6 +3845,7 @@ function applyDoorTypeChange(newType){
   if(profile.operation==='swing' || profile.operation==='fold'){ patch.hingeSide = 'R'; patch.swingDir = 'in'; }
   else if(profile.operation==='double-swing' || profile.operation==='double-fold'){ patch.swingDir = 'in'; }
   else if(profile.operation==='slide'){ patch.slideDir = 'R'; if(!sel.isExterior) patch.slideSide = 'R'; }
+  else if(profile.operation==='slide-2'){ patch.slideDir = 'R'; }
   doorWindowEdits[selectedDoorWindowId] = {...(doorWindowEdits[selectedDoorWindowId]||{}), ...patch};
   saveDoorWindowEdits();
   rebuildDoorWindow(selectedDoorWindowId, sel.isExterior);
