@@ -1427,7 +1427,8 @@ function drawLaundry(group,shape,w,d,h){
   }
 }
 // ---- 玄関・土間・シューズクロークの造作（blender/entry_assets.py と同じ部品レシピ）----
-const ENTRY_SHAPES=['wallHookRail','wallPlankShelf','wallStorage'];
+const ENTRY_SHAPES=['wallHookRail','wallPlankShelf','wallStorage','cornerPlankShelf'];
+const CORNER_RAIL_INSET=.03;   // L字の可動棚：角の棚柱は、もう一方の辺の板からこれだけ離す
 const ENTRY_LIMITS=Object.fromEntries(ENTRY_SHAPES.map(s=>[s,SHAPE_LIMITS[s]])); // data/shape-limits.json
 const ENTRY_BOARD=.02, ENTRY_PEG_LEN=.07, ENTRY_PEG_W=.022, ENTRY_TIP_RISE=.045, ENTRY_SPACING=.17;
 const ENTRY_RAIL_W=.04, ENTRY_RAIL_D=.025, ENTRY_PLANK_T=.02, ENTRY_PLANK_PITCH=.28, ENTRY_PLANK_FIRST=.28;
@@ -1472,7 +1473,8 @@ function entryParts(shape,w,d,h,options){
   const parts=[];
   const box=(name,x0,x1,z0,z1,y0,y1,material,bevel)=>parts.push({name,bounds:[x0,x1,z0,z1,y0,y1],material,kind:'box',bevel});
   options=options||{};
-  const allowed={wallHookRail:[],wallPlankShelf:['shelfHeights'],wallStorage:['layout','bandCutouts']}[shape];
+  const allowed={wallHookRail:[],wallPlankShelf:['shelfHeights'],wallStorage:['layout','bandCutouts'],
+    cornerPlankShelf:['returnSide','mainDepth','returnDepth','shelfHeights','returnFrom']}[shape];
   if(typeof options!=='object' || Object.keys(options).some(k=>!allowed.includes(k)))
     throw Error('この造作の storage に書けない項目があります: '+shape);
   if(shape==='wallHookRail'){
@@ -1524,6 +1526,30 @@ function entryParts(shape,w,d,h,options){
       doors('upper-door',front-t,front,STORAGE_BAND_TOP+.003,STORAGE_UPPER_TOP-.003,3,'wallcream');
       box('filler',x0,x1,back,front,STORAGE_UPPER_TOP,h,'wallcream',.002);
     }
+  }else if(shape==='cornerPlankShelf'){
+    // L字の可動棚（2026-11-14）。blender/entry_assets.py の corner_plank_shelf_parts と同じ（角は突き付け、板は重ねない）
+    const side=options.returnSide ?? 'right';
+    if(!['left','right'].includes(side)) throw Error('L字の可動棚の returnSide は left か right です');
+    const mainD=options.mainDepth ?? .3, returnD=options.returnDepth ?? .3;
+    if(![mainD,returnD].every(v=>Number.isFinite(v) && v>=.05 && v<=.4)) throw Error('L字の可動棚の mainDepth・returnDepth は 0.05〜0.4m です');
+    if(mainD>d-.15 || returnD>w-.15) throw Error('L字の可動棚の板の奥行きが、もう一方の辺に対して深すぎます（15cm以上の板が残ること）');
+    const heights=entryPlankPositions(h,options.shelfHeights);
+    const start=options.returnFrom ?? 0;
+    if(!Number.isFinite(start) || start<0) throw Error('L字の可動棚の returnFrom は0以上の高さです');
+    const returned=heights.filter(y=>y>=start-1e-9);
+    if(!returned.length) throw Error('L字の可動棚の returnFrom より上に棚板がありません');
+    const sign=side==='right'?1:-1, back=-d/2, front=d/2;
+    const wallX=sign*w/2, innerX=wallX-sign*returnD, farX=-wallX, cornerRailX=innerX-sign*CORNER_RAIL_INSET;
+    const railD=Math.min(ENTRY_RAIL_D,mainD*.3), railReturnD=Math.min(ENTRY_RAIL_D,returnD*.3);
+    const lo=(a,b)=>Math.min(a,b), hi=(a,b)=>Math.max(a,b);
+    const returnRailY0=start>0?Math.max(0,start-.1):0;
+    box('rail-far',lo(farX,farX+sign*ENTRY_RAIL_W),hi(farX,farX+sign*ENTRY_RAIL_W),back,back+railD,0,h,'metal',.003);
+    box('rail-corner',lo(cornerRailX,cornerRailX-sign*ENTRY_RAIL_W),hi(cornerRailX,cornerRailX-sign*ENTRY_RAIL_W),back,back+railD,0,h,'metal',.003);
+    box('return-rail-corner',lo(wallX,wallX-sign*railReturnD),hi(wallX,wallX-sign*railReturnD),
+      back+mainD+CORNER_RAIL_INSET,back+mainD+CORNER_RAIL_INSET+ENTRY_RAIL_W,returnRailY0,h,'metal',.003);
+    box('return-rail-far',lo(wallX,wallX-sign*railReturnD),hi(wallX,wallX-sign*railReturnD),front-ENTRY_RAIL_W,front,returnRailY0,h,'metal',.003);
+    heights.forEach((y0,j)=>box(`plank-${j}`,-w/2,w/2,back,back+mainD,y0,y0+ENTRY_PLANK_T,'wood',.004));
+    returned.forEach((y0,j)=>box(`return-plank-${j}`,lo(wallX,innerX),hi(wallX,innerX),back+mainD,front,y0,y0+ENTRY_PLANK_T,'wood',.004));
   }
   return parts;
 }
@@ -2236,6 +2262,7 @@ const FURNITURE_SHAPES = {
   wallHookRail(group,w,d,h){drawEntry(group,'wallHookRail',w,d,h);},
   wallPlankShelf(group,w,d,h,storage){drawEntry(group,'wallPlankShelf',w,d,h,storage);},
   wallStorage(group,w,d,h,storage){drawEntry(group,'wallStorage',w,d,h,storage);},
+  cornerPlankShelf(group,w,d,h,storage){drawEntry(group,'cornerPlankShelf',w,d,h,storage);},
   shelf(group,w,d,h){
     fPart(group, w,h,0.04, 0,0,-d*0.45, FMAT.wood); // 背板
     fPart(group, 0.04,h,d, -w*0.47,0,0, FMAT.wood); // 側板
