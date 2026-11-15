@@ -5,6 +5,7 @@
 (function(){
 'use strict';
 if(typeof LASISSA === 'undefined' || !window.RyukaFinishes || !window.RyukaLasissa) return;
+const HAS_ENTRANCE = typeof GIESTA !== 'undefined' && !!window.RyukaGiesta;
 const L = window.RyukaLasissa;
 const el = (tag, attrs, ...children)=>{
   const node = document.createElement(tag);
@@ -75,6 +76,63 @@ const swatchStyle = c=>c.kind === 'wood'
   ? `background:repeating-linear-gradient(${c.grain === 'H' ? '0deg' : '90deg'},#${c.light} 0 3px,#${c.mean} 3px 7px,#${c.dark} 7px 8px,#${c.mean} 8px 12px)`
   : `background:#${c.mean}`;
 
+// ---------- 玄関ドア（LIXIL ジエスタ2、2026-11-15）----------
+// 今は施主がショールームで絞った2点（自宅 P12型×ハンドダウンチェリー、民泊 G13型×チーク）を決め打ち。型・色の選択肢は
+// data/giesta-doors.json の models・colors から作るので、足せば選べる。選んだ物は表示中の案の entranceDoors（割当と同じなら消す）
+const entranceIdOf = z=>Object.keys(GIESTA.assignments).find(id=>GIESTA.assignments[id].zone === z);
+function entranceSelection(z){
+  const id = entranceIdOf(z);
+  return id ? RyukaGiesta.resolveSelection(GIESTA, id, entranceDoorsFor(z)) : null;
+}
+function pickEntrance(field, value){
+  const id = entranceIdOf(zone), base = GIESTA.assignments[id];
+  const next = {...entranceSelection(zone), [field]: value};
+  const fixed = RyukaGiesta.resolveSelection(GIESTA, id, {[id]: next});   // 選べない組み合わせは直す
+  const overrides = JSON.parse(JSON.stringify(entranceDoorsFor(zone)));
+  if(fixed.model === base.model && fixed.color === base.color && fixed.handleFinish === base.handleFinish) delete overrides[id];
+  else overrides[id] = fixed;
+  RyukaFinishes.setEntranceDoors(zone, overrides);
+}
+// 玄関ドアの前に立つ（外側か室内側）。戸は閉じたまま見る
+function lookAtEntrance(side){
+  const id = entranceIdOf(zone), e = lasissaDoors.get(id);
+  if(!e) return;
+  const d = e.door, o = OPENINGS.find(x=>x.id === id);
+  const outSign = {N: -1, S: 1, E: 1, W: -1}[o.face], sgn = side === 'out' ? outSign : -outSign, dist = side === 'out' ? 2.2 : 1.6;
+  const cx = d.orientation === 'H' ? d.center : d.wallAt, cz = d.orientation === 'H' ? d.wallAt : d.center;
+  const px = d.orientation === 'H' ? cx : cx + sgn*dist, pz = d.orientation === 'H' ? cz + sgn*dist : cz;
+  window.walkDoorsHeldClosed = true;
+  if(mode !== 'walk') enterWalkMode({x: px, z: pz, yaw: 0, level: d.floor, label: GIESTA.assignments[id].label});
+  walkPos.x = px; walkPos.z = pz; walkYaw = Math.atan2(cx - px, cz - pz); walkPitch = -0.03; updateWalkCamera();
+  render();
+}
+function entranceBlock(){
+  const id = entranceIdOf(zone);
+  if(!id) return null;
+  const sel = entranceSelection(zone), base = GIESTA.assignments[id], changed = !!entranceDoorsFor(zone)[id];
+  const model = GIESTA.models.find(m=>m.id === sel.model), color = GIESTA.colors.find(c=>c.id === sel.color);
+  return [
+    el('div', {class: 'door-block-title'}, `🚪 玄関ドア（LIXIL ジエスタ2）・${base.label}`),
+    el('div', {class: 'door-row'}, el('span', {class: 'door-label'}, '型'),
+      el('select', {'aria-label': '玄関ドアの型', onchange: e=>pickEntrance('model', e.target.value)},
+        GIESTA.models.map(m=>el('option', {value: m.id, selected: m.id === sel.model}, m.name)))),
+    el('div', {class: 'door-sub'}, model.note),
+    el('div', {class: 'door-label'}, `色：${color.name}（${color.id}）・${color.finish}`),
+    el('div', {class: 'door-swatches'}, model.colors.map(cid=>{
+      const c = GIESTA.colors.find(x=>x.id === cid);
+      return el('button', {class: 'door-swatch' + (cid === sel.color ? ' on' : ''), style: swatchStyle(c), title: `${c.name}（${c.id}・${c.finish}）`,
+        'aria-label': c.name, onclick: ()=>pickEntrance('color', cid)}, el('span', null, c.name));
+    })),
+    el('div', {class: 'door-row'}, el('span', {class: 'door-label'}, '金物の色'),
+      el('select', {'aria-label': '玄関ドアの金物の色', onchange: e=>pickEntrance('handleFinish', e.target.value)},
+        GIESTA.handleFinishes.map(f=>el('option', {value: f.id, selected: f.id === sel.handleFinish}, f.name)))),
+    el('div', {class: 'door-row door-actions'},
+      el('button', {onclick: ()=>lookAtEntrance('out')}, '🚶 外側から見る'), el('button', {onclick: ()=>lookAtEntrance('in')}, '🚶 室内から見る')),
+    el('p', {class: 'door-note'}, changed ? 'ショールームで絞った候補から変えています（保存すると正本に残ります）。'
+      : 'ショールームで絞った候補です。ほかの型・色は data/giesta-doors.json に足すと選べるようになります。形・色・木目は公式の画像から合わせた目安です。'),
+  ];
+}
+
 const section = el('details', {id: 'doorSection', class: 'door-section'});
 function render(){
   const sel = currentDoor() ? doorSelection(currentDoor()) : allSelection();
@@ -84,7 +142,7 @@ function render(){
   const designs = series.designs.filter(x=>(x.operations || ['swing', 'slide']).includes(operation === 'slide' ? 'slide' : 'swing'));
   const usesGlass = !!(L.designOf(LASISSA, sel).glass || L.designOf(LASISSA, sel).glassPanels);
   section.replaceChildren(...[
-    el('summary', null, '🚪 室内ドア（LIXIL ラシッサD）'),
+    el('summary', null, '🚪 ドア（室内：ラシッサD／玄関：ジエスタ2）'),
     el('div', {class: 'door-zones'}, ['home', 'guest'].map(z=>el('button', {class: z === zone ? 'on' : '',
       onclick: ()=>{ zone = z; target = 'all'; render(); }}, FINISH_ZONE_LABELS[z]))),
     el('div', {class: 'door-row'}, el('span', {class: 'door-label'}, '対象'),
@@ -121,8 +179,9 @@ function render(){
         LASISSA.glass.map(g=>el('option', {value: g.id, selected: g.id === sel.glass}, g.name)))) : null,
     el('label', {class: 'door-row door-hold'}, el('input', {type: 'checkbox', checked: !!window.walkDoorsHeldClosed,
       onchange: e=>{ window.walkDoorsHeldClosed = e.target.checked; }}), '近づいても戸を開けない（閉じた面を見比べる）'),
-    el('p', {class: 'door-note'}, '内覧（🚶）で戸に近づくと開きます。色・質感は公式の色見本に合わせた目安です。つや・手触りはショールームのサンプルで確かめてください。')
-  ].filter(Boolean));
+    el('p', {class: 'door-note'}, '内覧（🚶）で戸に近づくと開きます。色・質感は公式の色見本に合わせた目安です。つや・手触りはショールームのサンプルで確かめてください。'),
+    HAS_ENTRANCE ? el('div', {class: 'door-entrance'}, entranceBlock()) : null,
+  ].flat().filter(Boolean));
 }
 window.RyukaDoors = {refresh: render, render, lookAtDoor};
 const ui = document.getElementById('ui');

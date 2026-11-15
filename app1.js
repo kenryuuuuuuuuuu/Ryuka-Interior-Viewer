@@ -3533,15 +3533,15 @@ function lasissaWoodTexture(color){
   const canvas = document.createElement('canvas');
   const g = canvas.getContext && canvas.getContext('2d');
   if(!g) return null;
-  const Wd = RyukaLasissaWood, res = Wd.woodShade(color.wood), rgb = Wd.woodColors(color, res);
-  canvas.width = Wd.W; canvas.height = Wd.H;
-  const img = g.createImageData(Wd.W, Wd.H);
-  for(let i = 0; i < Wd.W*Wd.H; i++){ for(let c = 0; c < 3; c++) img.data[i*4 + c] = Math.round(rgb[i*3 + c]*255); img.data[i*4 + 3] = 255; }
+  const Wd = RyukaLasissaWood, res = Wd.woodShade(color.wood), rgb = Wd.woodColors(color, res), TW = res.width, TH = res.height_px;
+  canvas.width = TW; canvas.height = TH;
+  const img = g.createImageData(TW, TH);
+  for(let i = 0; i < TW*TH; i++){ for(let c = 0; c < 3; c++) img.data[i*4 + c] = Math.round(rgb[i*3 + c]*255); img.data[i*4 + 3] = 255; }
   g.putImageData(img, 0, 0);
-  const bump = document.createElement('canvas'); bump.width = Wd.W; bump.height = Wd.H;
-  const bg = bump.getContext('2d'), bimg = bg.createImageData(Wd.W, Wd.H);
+  const bump = document.createElement('canvas'); bump.width = TW; bump.height = TH;
+  const bg = bump.getContext('2d'), bimg = bg.createImageData(TW, TH);
   let lo = Infinity, hi = -Infinity; for(const v of res.height){ if(v < lo) lo = v; if(v > hi) hi = v; }
-  for(let i = 0; i < Wd.W*Wd.H; i++){ const v = hi > lo ? Math.round((res.height[i] - lo)/(hi - lo)*255) : 128; bimg.data[i*4] = bimg.data[i*4 + 1] = bimg.data[i*4 + 2] = v; bimg.data[i*4 + 3] = 255; }
+  for(let i = 0; i < TW*TH; i++){ const v = hi > lo ? Math.round((res.height[i] - lo)/(hi - lo)*255) : 128; bimg.data[i*4] = bimg.data[i*4 + 1] = bimg.data[i*4 + 2] = v; bimg.data[i*4 + 3] = 255; }
   bg.putImageData(bimg, 0, 0);
   const map = new THREE.CanvasTexture(canvas), bumpMap = new THREE.CanvasTexture(bump);
   for(const t of [map, bumpMap]){ t.wrapS = t.wrapT = THREE.RepeatWrapping; t.anisotropy = 4; }
@@ -3575,9 +3575,9 @@ function lasissaGlassTexture(spec){
   t.wrapS = t.wrapT = THREE.RepeatWrapping;
   return t;
 }
-function lasissaMaterial(part, sel){
-  const colors = Object.fromEntries(LASISSA.colors.map(c=>[c.id, c]));
-  const key = part.mat === 'door' || part.mat === 'groove' ? `${part.mat}|${sel.color}` : part.mat === 'glass' ? `glass|${part.glass}` : `metal|${part.finish}`;
+function lasissaMaterial(part, sel, doc=LASISSA){
+  const colors = Object.fromEntries(doc.colors.map(c=>[c.id, c]));
+  const key = doc.product + '|' + (part.mat === 'door' || part.mat === 'groove' ? `${part.mat}|${sel.color}` : part.mat === 'glass' ? `glass|${part.glass}` : `metal|${part.finish}`);
   if(lasissaMaterialCache.has(key)) return lasissaMaterialCache.get(key);
   let m;
   if(part.mat === 'door'){
@@ -3585,7 +3585,7 @@ function lasissaMaterial(part, sel){
     const opts = {color: 0xffffff, roughness: c.roughness, metalness: 0};
     if(c.kind === 'wood'){
       const tex = lasissaWoodTexture(c);
-      if(tex){ opts.map = tex.map; opts.bumpMap = tex.bumpMap; opts.bumpScale = .0015; }
+      if(tex){ opts.map = tex.map; opts.bumpMap = tex.bumpMap; opts.bumpScale = c.bump ?? .0015; }
       else opts.color = new THREE.Color('#' + c.mean);
     } else opts.color = new THREE.Color('#' + c.mean);
     m = new THREE.MeshStandardMaterial(opts);
@@ -3593,20 +3593,20 @@ function lasissaMaterial(part, sel){
     const c = colors[sel.color], base = new THREE.Color('#' + (c.dark || c.mean));
     m = new THREE.MeshStandardMaterial({color: base.multiplyScalar(.45), roughness: .85});
   } else if(part.mat === 'glass'){
-    const spec = LASISSA.glass.find(x=>x.id === part.glass);
+    const spec = doc.glass.find(x=>x.id === part.glass);
     const tex = lasissaGlassTexture(spec);
     m = new THREE.MeshStandardMaterial({color: new THREE.Color('#' + spec.color), roughness: spec.roughness, metalness: 0,
       transparent: true, opacity: spec.opacity, depthWrite: false, side: THREE.DoubleSide});
     if(tex){ m.map = tex; m.bumpMap = tex; m.bumpScale = .002; }
   } else {
-    const f = LASISSA.handleFinishes.find(x=>x.id === part.finish);
+    const f = doc.handleFinishes.find(x=>x.id === part.finish);
     m = new THREE.MeshStandardMaterial({color: new THREE.Color('#' + f.color), roughness: f.roughness, metalness: Math.min(.5, f.metalness)});
   }
   lasissaMaterialCache.set(key, m);
   return m;
 }
 // 部品の箱を作り、面の UV を実寸で付ける（木目の向きは部品の grain、'leaf' は色の木目。Blender の build_leaf と同じ）
-function lasissaPartMesh(part, sel){
+function lasissaPartMesh(part, sel, doc=LASISSA){
   const [x0, x1, y0, y1, z0, z1] = part.box, dx = x1 - x0, dy = y1 - y0, dz = z1 - z0;
   let geo;
   if(part.kind === 'cylZ'){ geo = new THREE.CylinderGeometry(dx/2, dx/2, dz, 16); geo.rotateX(Math.PI/2); }
@@ -3615,7 +3615,7 @@ function lasissaPartMesh(part, sel){
   else geo = new THREE.BoxGeometry(dx, dy, dz);
   const cx = (x0 + x1)/2, cy = (y0 + y1)/2, cz = (z0 + z1)/2;
   if(part.mat === 'door' || part.mat === 'glass'){
-    const color = LASISSA.colors.find(c=>c.id === sel.color);
+    const color = doc.colors.find(c=>c.id === sel.color);
     const grain = (part.grain || 'leaf') === 'leaf' ? (color.grain === 'H' ? 'x' : 'y') : part.grain;
     const A = part.mat === 'glass' ? .25 : RyukaLasissaWood.W/RyukaLasissaWood.PX_PER_M, L = part.mat === 'glass' ? .25 : RyukaLasissaWood.H/RyukaLasissaWood.PX_PER_M;
     const pos = geo.attributes.position, nrm = geo.attributes.normal, uv = geo.attributes.uv;
@@ -3629,7 +3629,7 @@ function lasissaPartMesh(part, sel){
     }
     uv.needsUpdate = true;
   }
-  const mesh = new THREE.Mesh(geo, lasissaMaterial(part, sel));
+  const mesh = new THREE.Mesh(geo, lasissaMaterial(part, sel, doc));
   mesh.position.set(cx, cy, cz);
   if(part.mat === 'glass') mesh.renderOrder = 4;
   return mesh;
@@ -3641,8 +3641,17 @@ function disposeChildren(group){
 // 引戸：入れ物は戸の中心。sgn=+1 なら取っ手の側が壁沿いの + の向き（slideDir が L）
 function fillLasissaLeaf(entry, leaf){
   disposeChildren(leaf.group);
-  const sel = lasissaSelection(entry.door.id, entry.operation);
   const inner = new THREE.Group();
+  if(entry.kit === 'giesta'){
+    // 玄関ドア：外側(+z)と室内側(−z)で見た目が違う。入れ物の +X が外側を向くとき（outsideIsPlusX）は z を反転する
+    const sel = giestaSelection(entry.door.id);
+    RyukaGiesta.leafParts(GIESTA, sel, leaf.w, leaf.h).forEach(p=>inner.add(lasissaPartMesh(p, sel, GIESTA)));
+    inner.rotation.y = -Math.PI/2;
+    if(leaf.outsideIsPlusX) inner.scale.z = -1;
+    leaf.group.add(inner);
+    return;
+  }
+  const sel = lasissaSelection(entry.door.id, entry.operation);
   RyukaLasissa.leafParts(LASISSA, sel, leaf.w, leaf.h, entry.operation).forEach(p=>inner.add(lasissaPartMesh(p, sel)));
   if(leaf.kind === 'swing') inner.rotation.y = -Math.PI/2;
   else if(leaf.orientation === 'H'){ if(leaf.sgn > 0) inner.position.set(-leaf.w/2, -leaf.h/2, 0); else { inner.rotation.y = Math.PI; inner.position.set(leaf.w/2, -leaf.h/2, 0); } }
@@ -3653,12 +3662,14 @@ function fillLasissaLeaf(entry, leaf){
 function fillLasissaFrame(entry){
   const {door: d, frame} = entry;
   disposeChildren(frame);
-  const sel = lasissaSelection(d.id, entry.operation), fw = LASISSA_FRAME_W, half = INTERIOR_WALL_T/2 + .008;
+  const giestaKit = entry.kit === 'giesta', doc = giestaKit ? GIESTA : LASISSA;
+  const sel = giestaKit ? giestaSelection(d.id) : lasissaSelection(d.id, entry.operation);
+  const fw = giestaKit ? GIESTA.leaf.frameWidth : LASISSA_FRAME_W, half = (giestaKit ? WALL_T : INTERIOR_WALL_T)/2 + .008;
   const a0 = d.center - d.width/2, a1 = d.center + d.width/2, h = d.height;
   const pieces = [[a0 - fw, a0 + .004, 0, h + fw, 'y'], [a1 - .004, a1 + fw, 0, h + fw, 'y'], [a0 - fw, a1 + fw, h - .004, h + fw, 'x']];
   for(const [u0, u1, y0, y1, grain] of pieces){
     const part = {box: [u0, u1, y0, y1, -half, half], mat: 'door', grain};
-    const mesh = lasissaPartMesh(part, sel);
+    const mesh = lasissaPartMesh(part, sel, doc);
     // 部品の座標（壁沿い u、高さ y、壁に直交 n）→ 場面の座標
     const u = mesh.position.x, y = mesh.position.y;
     if(d.orientation === 'H'){ const [sx, sz] = toScene(u, d.wallAt); mesh.position.set(sx, y, sz); }
@@ -3666,7 +3677,15 @@ function fillLasissaFrame(entry){
     frame.add(mesh);
   }
 }
-function lasissaKey(entry){ return JSON.stringify(lasissaSelection(entry.door.id, entry.operation)); }
+function lasissaKey(entry){ return JSON.stringify(entry.kit === 'giesta' ? giestaSelection(entry.door.id) : lasissaSelection(entry.door.id, entry.operation)); }
+// 玄関ドア（2026-11-15、LIXIL ジエスタ2）の選択：data/giesta-doors.json の割当 → 表示中の案の entranceDoors の上書き
+function giestaSelection(doorId){
+  const zone = GIESTA.assignments[doorId].zone;
+  let overrides;
+  if(typeof entranceDoorsFor === 'function') overrides = entranceDoorsFor(zone);
+  else { const s = FINISHES_DOC && FINISHES_DOC.schemes.find(x=>x.id === (FINISHES_DOC.activeSchemes || {})[zone]); overrides = (s && s.entranceDoors) || {}; }
+  return RyukaGiesta.resolveSelection(GIESTA, doorId, overrides);
+}
 // 案が変わったとき（web/finishes.js の commit）：選択が変わった戸だけ作り直す
 function refreshLasissaDoors(){
   lasissaDoors.forEach(entry=>{
@@ -3677,12 +3696,12 @@ function refreshLasissaDoors(){
     fillLasissaFrame(entry);
   });
 }
-function lasissaEntry(door, operation){
+function lasissaEntry(door, operation, kit='lasissa'){
   if(!lasissaDoors.has(door.id)){
     const frame = new THREE.Group();
     frame.position.y = door.floor === 1 ? LEVELS.fl1 : LEVELS.fl2;
     walkGroup.add(frame);
-    lasissaDoors.set(door.id, {door, operation, leaves: [], frame, key: null});
+    lasissaDoors.set(door.id, {door, operation, kit, leaves: [], frame, key: null});
   }
   return lasissaDoors.get(door.id);
 }
@@ -3702,7 +3721,12 @@ function makeWalkDoorLeafMesh(width, height, thick){
 // drawSwingLeafと同じ規約）
 function addWalkSwingLeaf(orientation, hingeAt, alongSign, wallCoord, baseY, height, w, thick, openSign, level, anchorX, anchorZ, lasissa){
   let group;
-  if(lasissa){ group = new THREE.Group(); lasissa.leaves.push({group, kind: 'swing', w, h: height}); }
+  if(lasissa){
+    // 入れ物の +X（閉じた向きから回した先）が壁のどちらを向くか。H の壁：(0, −alongSign)、V の壁：(alongSign, 0)。
+    // 外開きの戸（openSign が外側）なら、+X が openSign と同じ向きのとき +X が外側
+    const dot = orientation==='H' ? -alongSign*openSign : alongSign*openSign;
+    group = new THREE.Group(); lasissa.leaves.push({group, kind: 'swing', w, h: height, outsideIsPlusX: dot > 0});
+  }
   else group = makeWalkDoorLeafMesh(w, height, thick);
   const [sx,sz] = orientation==='H' ? toScene(hingeAt, wallCoord) : toScene(wallCoord, hingeAt);
   group.position.set(sx, baseY, sz);
@@ -3853,9 +3877,13 @@ OPENINGS.forEach(o=>{
     const wallX = eff.x!==undefined ? eff.x : 0;
     orientation='V'; alongFrom=eff.lz; alongTo=eff.lz+eff.w; wallCoord=wallX; outSign=-1;
   }
+  // 玄関ドア（ジエスタ2）は部品で作る。外開き（swingDir 'out'）の戸で、外側の面を壁の外へ向ける
+  const entrance = (typeof GIESTA !== 'undefined' && GIESTA.assignments[eff.id] && eff.operation === 'swing' && eff.swingDir === 'out')
+    ? lasissaEntry({id: eff.id, orientation, center: (alongFrom + alongTo)/2, width: alongTo - alongFrom, height: eff.h, floor: eff.level, wallAt: wallCoord}, 'swing', 'giesta')
+    : null;
   addWalkDoorLeaves({
     orientation, alongFrom, alongTo, wallCoord, baseY: baseFl, height: eff.h, operation: eff.operation,
-    hingeSide: eff.hingeSide, swingDir: eff.swingDir, slideDir: eff.slideDir, outSign, level: eff.level,
+    hingeSide: eff.hingeSide, swingDir: eff.swingDir, slideDir: eff.slideDir, outSign, level: eff.level, lasissa: entrance,
   });
 });
 // 毎フレーム、プレイヤーとの距離に応じて開閉度(t: 0=閉,1=開)をなめらかに近づける

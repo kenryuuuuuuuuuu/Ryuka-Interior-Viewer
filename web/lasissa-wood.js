@@ -4,7 +4,7 @@
 //   模様の1枚＝木目に直交する方向 W/PX_PER_M m × 木目に沿った方向 H/PX_PER_M m（約1.07m × 2.13m。戸1枚に繰り返しが出ない）。
 //   出力 shade は平均0の明暗。色は「明るい部分（light）と暗い部分（dark）」を、明暗の上位・下位10%に合わせて塗る。
 (function(root){
-  const W = 512, H = 1024, PX_PER_M = 480;
+  const BASE_W = 512, BASE_H = 1024, BASE_PX = 480, W = BASE_W, H = BASE_H, PX_PER_M = BASE_PX;   // 基本の1枚。p.res で細かくする（物理の大きさは同じ）
 
   function mulberry32(seed){
     let a = seed >>> 0;
@@ -12,7 +12,7 @@
   }
 
   // 継ぎ目なく繰り返す値ノイズ（0〜1）。横 cx 個 × 縦 cy 個の格子。x・y は画素（小数可、端で回り込む）
-  function makeNoise(cx, cy, rnd){
+  function makeNoise(cx, cy, rnd, W, H){
     cx = Math.max(1, Math.round(cx)); cy = Math.max(1, Math.round(cy));
     const grid = new Float64Array(cx*cy);
     for(let i = 0; i < grid.length; i++) grid[i] = rnd();
@@ -30,18 +30,27 @@
   // 明暗（平均0）と凹凸（高さ）。p は data/lasissa-d.json の色の wood（木目）または plain（単色のむら）
   //   warp：縞が横へ揺れる量(m)、band：幅の広い縞（約2〜5cm）、mid：中くらいの筋（約0.6〜1.5cm）、fine：細い筋（画素の幅）、
   //   figure：板目の山形・炎形の線、rings：その線の間隔(m)、pores：道管の点、knots：節の数（1m²あたり）、seed：乱数の種
+  //   （2026-11-15 玄関ドア）res：解像度の倍率（2＝1mm/画素。物理の大きさは同じ）、cloud：雲のようなむら（約5〜12cm）、
+  //   spots：散る小さな黒い点の数（1m²あたり）、spotR：点の半径(m)、spotDepth：点の濃さ（明暗の単位）
   function woodShade(p){
+    const sc = p.res || 1, W = BASE_W*sc, H = BASE_H*sc, PX_PER_M = BASE_PX*sc;
     const rnd = mulberry32(p.seed || 1);
+    const mk = (cx, cy)=>makeNoise(cx, cy, rnd, W, H);
     const A = W/PX_PER_M, L = H/PX_PER_M;   // 実寸(m)
-    const warpLo = makeNoise(3, 2, rnd), warpHi = makeNoise(9, 5, rnd);
-    const band1 = makeNoise(A/(p.bandScale || .035), 2, rnd), band2 = makeNoise(A/((p.bandScale || .035)/2.3), 3, rnd);
-    const mid = makeNoise(A/.008, L/1.0, rnd), fine = makeNoise(W/2, L/.25, rnd);
-    const figNoise = makeNoise(4, 3, rnd), figMask = makeNoise(3, 2, rnd);
-    const pore = makeNoise(W/1, L/.006, rnd);
-    const lineWiggle = makeNoise(A/.05, L/.5, rnd), lineVar = makeNoise(A/.02, L/.25, rnd);
+    const warpLo = mk(3, 2), warpHi = mk(9, 5);
+    const band1 = mk(A/(p.bandScale || .035), 2), band2 = mk(A/((p.bandScale || .035)/2.3), 3);
+    const mid = mk(A/.008, L/1.0), fine = mk(W/2, L/.25);
+    const figNoise = mk(4, 3), figMask = mk(3, 2);
+    const pore = mk(W/1, L/.006);
+    const lineWiggle = mk(A/.05, L/.5), lineVar = mk(A/.02, L/.25);
     const knots = [];
     const nk = Math.round((p.knots || 0)*A*L);
     for(let k = 0; k < nk; k++) knots.push({x: rnd()*W, y: rnd()*H, r: (.008 + rnd()*.014)*PX_PER_M, e: 2.2 + rnd()*1.2});
+    // 新しい項目の乱数は既存の乱数のあとに使う（既存の色の模様を変えない）
+    const cloudA = p.cloud ? mk(A/.12, L/.2) : null, cloudB = p.cloud ? mk(A/.05, L/.08) : null;
+    const spots = [];
+    const ns = Math.round((p.spots || 0)*A*L);
+    for(let k = 0; k < ns; k++) spots.push({x: rnd()*W, y: rnd()*H, r: (p.spotR || .0025)*PX_PER_M*(.6 + rnd()*.9), a: .6 + rnd()*.8});
     const gapPx = (p.lineGap || .005)*PX_PER_M;
     const shade = new Float64Array(W*H), height = new Float64Array(W*H);
     const ringPx = (p.rings || .012)*PX_PER_M;
@@ -74,6 +83,7 @@
           const dot = Math.max(0, (v - .82)/.18);
           s -= p.pores*dot; h -= p.pores*dot;
         }
+        if(p.cloud) s += p.cloud*((cloudA(xa, y) - .5) + .5*(cloudB(xa, y) - .5));
         for(const k of knots){
           let dx = x - k.x, dy = (y - k.y)/k.e;
           dx -= Math.round(dx/W)*W; dy -= Math.round(dy/H)*H;   // 端で回り込む
@@ -92,6 +102,16 @@
     const lo = sorted[Math.floor(sorted.length*.1)], hi = sorted[Math.floor(sorted.length*.9)];
     const k = hi > lo ? 2/(hi - lo) : 0, c = (hi + lo)/2;
     for(let i = 0; i < shade.length; i++) shade[i] = (shade[i] - c)*k;
+    // 散る点（明暗を合わせたあとに足す＝「暗い部分」より濃い点）。端で回り込む
+    for(const sp of spots){
+      const R = Math.ceil(sp.r*2.2), cx = Math.floor(sp.x + .5), cy = Math.floor(sp.y + .5);
+      for(let dy = -R; dy <= R; dy++) for(let dx = -R; dx <= R; dx++){
+        const r2 = (dx*dx + dy*dy)/(sp.r*sp.r);
+        if(r2 >= 4.84) continue;
+        const v = sp.a*Math.exp(-r2*1.8), i = (((cy + dy) % H) + H) % H*W + (((cx + dx) % W) + W) % W;
+        shade[i] -= (p.spotDepth || 1.8)*v; height[i] -= v*.6;
+      }
+    }
     return {shade, height, width: W, height_px: H, pxPerM: PX_PER_M};
   }
 
@@ -99,8 +119,8 @@
   // 色の画像（0〜1のRGB、Float32Array で W×H×3）。明暗 s を「light と dark の平均 ± 半分の差 × s」で塗る
   function woodColors(color, shadeResult){
     const light = hexRgb(color.light), dark = hexRgb(color.dark);
-    const out = new Float32Array(W*H*3), s = shadeResult.shade;
-    for(let i = 0; i < W*H; i++)
+    const n = shadeResult.shade.length, out = new Float32Array(n*3), s = shadeResult.shade;
+    for(let i = 0; i < n; i++)
       for(let c = 0; c < 3; c++) out[i*3 + c] = Math.min(1, Math.max(0, (light[c] + dark[c])/2 + (light[c] - dark[c])/2*s[i]));
     return out;
   }

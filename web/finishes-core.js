@@ -86,6 +86,9 @@ function finishesChangeCount(source, draft){
     if(JSON.stringify(da.all || {}) !== JSON.stringify(db.all || {})) n++;
     const pa = da.perDoor || {}, pb = db.perDoor || {};
     for(const d of new Set([...Object.keys(pa), ...Object.keys(pb)])) if(JSON.stringify(pa[d]) !== JSON.stringify(pb[d])) n++;
+    // 玄関ドア（2026-11-15）。戸ごとの選択を1件ずつ
+    const ea = a.entranceDoors || {}, eb = b.entranceDoors || {};
+    for(const d of new Set([...Object.keys(ea), ...Object.keys(eb)])) if(JSON.stringify(ea[d]) !== JSON.stringify(eb[d])) n++;
   }
   for(const zone of FINISH_ZONES) if((source.activeSchemes || {})[zone] !== (draft.activeSchemes || {})[zone]) n++;
   return n;

@@ -1,3 +1,3 @@
 // 閲覧版の印（scripts/build-viewer.mjs が書く）。web/viewer.js と web/finishes.js が見る。
-window.RYUKA_VIEWER = {"builtAt":"2026-11-15版","commit":"32fb03e","dataSig":"afac846132"};
-try{ if(localStorage.getItem('ryuka-viewer-data-sig') !== "afac846132"){ ["ryuka-finishes-draft-v2","ryuka-furniture-edits-v1","ryuka-furniture-added-v1","ryuka-furniture-deleted-v1","ryuka-door-window-edits-v1","ryuka-electrical-edits-v1","ryuka-electrical-added-v1","ryuka-electrical-deleted-v1"].forEach(function(k){ localStorage.removeItem(k); }); localStorage.setItem('ryuka-viewer-data-sig', "afac846132"); } }catch(e){}
+window.RYUKA_VIEWER = {"builtAt":"2026-11-15版","commit":"5e0cae5","dataSig":"9a3ae4b7ff"};
+try{ if(localStorage.getItem('ryuka-viewer-data-sig') !== "9a3ae4b7ff"){ ["ryuka-finishes-draft-v2","ryuka-furniture-edits-v1","ryuka-furniture-added-v1","ryuka-furniture-deleted-v1","ryuka-door-window-edits-v1","ryuka-electrical-edits-v1","ryuka-electrical-added-v1","ryuka-electrical-deleted-v1"].forEach(function(k){ localStorage.removeItem(k); }); localStorage.setItem('ryuka-viewer-data-sig', "9a3ae4b7ff"); } }catch(e){}

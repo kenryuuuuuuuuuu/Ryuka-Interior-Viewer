@@ -42,6 +42,8 @@ const refreshDoorsNow = ()=>{ if(typeof refreshLasissaDoors === 'function') refr
 function commit(){ saveFinishesDraft(); render(); refreshProducts(); refreshFurnitureColors(); refreshPanel(); refreshWalkHud(); refreshProductControlsNow(); refreshDoorsNow(); }
 // 区分（home／guest）の表示中の案の室内ドアの選択（{all, perDoor}）
 window.lasissaDoorsFor = zone=>{ const s = doc.schemes.find(x=>x.id === (doc.activeSchemes || {})[zone]); return (s && s.doors) || {}; };
+// 玄関ドア（2026-11-15、LIXIL ジエスタ2）：区分の表示中の案の上書き {戸id: {model, color, handleFinish}}
+window.entranceDoorsFor = zone=>{ const s = doc.schemes.find(x=>x.id === (doc.activeSchemes || {})[zone]); return (s && s.entranceDoors) || {}; };
 
 // ---------- 採用品の選択肢（例：キッチンのIH背面）。案ごとに productOptions {家具id: {選択肢: 値}} ----------
 // 選択肢のある採用品（data/products/*.json の options）。家具の描画（web/products.js）はこの案の値で作る
@@ -617,6 +619,12 @@ window.RyukaFinishes = {
     if(doors.all && Object.keys(doors.all).length) clean.all = doors.all;
     if(doors.perDoor && Object.keys(doors.perDoor).length) clean.perDoor = doors.perDoor;
     if(Object.keys(clean).length) s.doors = clean; else delete s.doors;
+    commit();
+  },
+  // 玄関ドア（web/doors.js の「玄関ドア」欄から）。zone の表示中の案の entranceDoors を書き換える（空になれば消す）
+  setEntranceDoors: (zone, entranceDoors)=>{
+    const s = schemeOfZone(zone);
+    if(Object.keys(entranceDoors).length) s.entranceDoors = entranceDoors; else delete s.entranceDoors;
     commit();
   },
   schemeName: zone=>schemeOfZone(zone).name,
