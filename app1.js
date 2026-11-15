@@ -3513,6 +3513,179 @@ function shortAngleLerp(a, b, t){
   while(d < -Math.PI) d += Math.PI*2;
   return a + d*t;
 }
+// ---- 室内ドア（2026-11-15、LIXIL ラシッサD）：内覧の戸本体を部品で作る ----
+// 部品は web/lasissa.js（Blender の generated/door-leaves.json と同じ作り方）、木目は web/lasissa-wood.js。
+// 選択は表示中の案の doors（web/finishes.js の lasissaDoorsFor）。案が変わったら refreshLasissaDoors() で中身だけ作り直す。
+const LASISSA_FRAME_W = .025;   // 枠の見付け（細いライン枠の目安）
+const lasissaDoors = new Map();  // 戸id → {door, operation, leaves:[{group, kind, w, h, orientation, sgn}], frame, key}
+const lasissaMaterialCache = new Map();
+function lasissaSchemeDoors(zone){
+  if(typeof lasissaDoorsFor === 'function') return lasissaDoorsFor(zone);
+  const s = FINISHES_DOC && FINISHES_DOC.schemes.find(x=>x.id === (FINISHES_DOC.activeSchemes || {})[zone]);
+  return (s && s.doors) || {};
+}
+function lasissaSelection(doorId, operation){
+  const zone = DOOR_ZONES[doorId] || 'home';
+  return RyukaLasissa.resolveSelection(LASISSA, zone, lasissaSchemeDoors(zone), doorId, operation);
+}
+function lasissaWoodTexture(color){
+  // 木目の色の画像と凹凸の画像（色ごとに1回だけ計算。テスト環境など描けないときは無地）
+  const canvas = document.createElement('canvas');
+  const g = canvas.getContext && canvas.getContext('2d');
+  if(!g) return null;
+  const Wd = RyukaLasissaWood, res = Wd.woodShade(color.wood), rgb = Wd.woodColors(color, res);
+  canvas.width = Wd.W; canvas.height = Wd.H;
+  const img = g.createImageData(Wd.W, Wd.H);
+  for(let i = 0; i < Wd.W*Wd.H; i++){ for(let c = 0; c < 3; c++) img.data[i*4 + c] = Math.round(rgb[i*3 + c]*255); img.data[i*4 + 3] = 255; }
+  g.putImageData(img, 0, 0);
+  const bump = document.createElement('canvas'); bump.width = Wd.W; bump.height = Wd.H;
+  const bg = bump.getContext('2d'), bimg = bg.createImageData(Wd.W, Wd.H);
+  let lo = Infinity, hi = -Infinity; for(const v of res.height){ if(v < lo) lo = v; if(v > hi) hi = v; }
+  for(let i = 0; i < Wd.W*Wd.H; i++){ const v = hi > lo ? Math.round((res.height[i] - lo)/(hi - lo)*255) : 128; bimg.data[i*4] = bimg.data[i*4 + 1] = bimg.data[i*4 + 2] = v; bimg.data[i*4 + 3] = 255; }
+  bg.putImageData(bimg, 0, 0);
+  const map = new THREE.CanvasTexture(canvas), bumpMap = new THREE.CanvasTexture(bump);
+  for(const t of [map, bumpMap]){ t.wrapS = t.wrapT = THREE.RepeatWrapping; t.anisotropy = 4; }
+  return {map, bumpMap};
+}
+function lasissaGlassTexture(spec){
+  // 型板ガラスの模様（1枚＝0.25m 四方を 256 画素で）。チェッカー＝格子、モール＝縦の筋、アンティーク＝槌目
+  if(!spec.pattern) return null;
+  const canvas = document.createElement('canvas'), g = canvas.getContext && canvas.getContext('2d');
+  if(!g) return null;
+  const N = 256, px = spec.patternSize/.25*N;
+  canvas.width = canvas.height = N;
+  g.fillStyle = '#d8d8d8'; g.fillRect(0, 0, N, N);
+  if(spec.pattern === 'checker' || spec.pattern === 'ribs'){
+    for(let x = 0; x < N; x += px){
+      const grd = g.createLinearGradient(x, 0, x + px, 0);
+      grd.addColorStop(0, '#9a9a9a'); grd.addColorStop(.5, '#ffffff'); grd.addColorStop(1, '#9a9a9a');
+      g.fillStyle = grd; g.fillRect(x, 0, px, N);
+    }
+    if(spec.pattern === 'checker') for(let y = 0; y < N; y += px){ g.fillStyle = 'rgba(120,120,120,.45)'; g.fillRect(0, y, N, Math.max(1, px*.18)); }
+  } else {
+    const rnd = RyukaLasissaWood.mulberry32(5);
+    for(let k = 0; k < 220; k++){
+      const x = rnd()*N, y = rnd()*N, r = px*(.3 + rnd()*.4);
+      const grd = g.createRadialGradient(x, y, 0, x, y, r);
+      grd.addColorStop(0, 'rgba(255,255,255,.9)'); grd.addColorStop(1, 'rgba(140,140,140,0)');
+      g.fillStyle = grd; g.beginPath(); g.arc(x, y, r, 0, Math.PI*2); g.fill();
+    }
+  }
+  const t = new THREE.CanvasTexture(canvas);
+  t.wrapS = t.wrapT = THREE.RepeatWrapping;
+  return t;
+}
+function lasissaMaterial(part, sel){
+  const colors = Object.fromEntries(LASISSA.colors.map(c=>[c.id, c]));
+  const key = part.mat === 'door' || part.mat === 'groove' ? `${part.mat}|${sel.color}` : part.mat === 'glass' ? `glass|${part.glass}` : `metal|${part.finish}`;
+  if(lasissaMaterialCache.has(key)) return lasissaMaterialCache.get(key);
+  let m;
+  if(part.mat === 'door'){
+    const c = colors[sel.color];
+    const opts = {color: 0xffffff, roughness: c.roughness, metalness: 0};
+    if(c.kind === 'wood'){
+      const tex = lasissaWoodTexture(c);
+      if(tex){ opts.map = tex.map; opts.bumpMap = tex.bumpMap; opts.bumpScale = .0015; }
+      else opts.color = new THREE.Color('#' + c.mean);
+    } else opts.color = new THREE.Color('#' + c.mean);
+    m = new THREE.MeshStandardMaterial(opts);
+  } else if(part.mat === 'groove'){
+    const c = colors[sel.color], base = new THREE.Color('#' + (c.dark || c.mean));
+    m = new THREE.MeshStandardMaterial({color: base.multiplyScalar(.45), roughness: .85});
+  } else if(part.mat === 'glass'){
+    const spec = LASISSA.glass.find(x=>x.id === part.glass);
+    const tex = lasissaGlassTexture(spec);
+    m = new THREE.MeshStandardMaterial({color: new THREE.Color('#' + spec.color), roughness: spec.roughness, metalness: 0,
+      transparent: true, opacity: spec.opacity, depthWrite: false, side: THREE.DoubleSide});
+    if(tex){ m.map = tex; m.bumpMap = tex; m.bumpScale = .002; }
+  } else {
+    const f = LASISSA.handleFinishes.find(x=>x.id === part.finish);
+    m = new THREE.MeshStandardMaterial({color: new THREE.Color('#' + f.color), roughness: f.roughness, metalness: Math.min(.5, f.metalness)});
+  }
+  lasissaMaterialCache.set(key, m);
+  return m;
+}
+// 部品の箱を作り、面の UV を実寸で付ける（木目の向きは部品の grain、'leaf' は色の木目。Blender の build_leaf と同じ）
+function lasissaPartMesh(part, sel){
+  const [x0, x1, y0, y1, z0, z1] = part.box, dx = x1 - x0, dy = y1 - y0, dz = z1 - z0;
+  let geo;
+  if(part.kind === 'cylZ'){ geo = new THREE.CylinderGeometry(dx/2, dx/2, dz, 16); geo.rotateX(Math.PI/2); }
+  else if(part.kind === 'cylX'){ geo = new THREE.CylinderGeometry(dy/2, dy/2, dx, 14); geo.rotateZ(Math.PI/2); }
+  else if(part.kind === 'sphere'){ geo = new THREE.SphereGeometry(dx/2, 18, 12); }
+  else geo = new THREE.BoxGeometry(dx, dy, dz);
+  const cx = (x0 + x1)/2, cy = (y0 + y1)/2, cz = (z0 + z1)/2;
+  if(part.mat === 'door' || part.mat === 'glass'){
+    const color = LASISSA.colors.find(c=>c.id === sel.color);
+    const grain = (part.grain || 'leaf') === 'leaf' ? (color.grain === 'H' ? 'x' : 'y') : part.grain;
+    const A = part.mat === 'glass' ? .25 : RyukaLasissaWood.W/RyukaLasissaWood.PX_PER_M, L = part.mat === 'glass' ? .25 : RyukaLasissaWood.H/RyukaLasissaWood.PX_PER_M;
+    const pos = geo.attributes.position, nrm = geo.attributes.normal, uv = geo.attributes.uv;
+    for(let i = 0; i < pos.count; i++){
+      const x = pos.getX(i) + cx, y = pos.getY(i) + cy, z = pos.getZ(i) + cz;
+      const ax = Math.abs(nrm.getX(i)), ay = Math.abs(nrm.getY(i)), az = Math.abs(nrm.getZ(i));
+      let along, across;
+      if(ay >= ax && ay >= az){ [along, across] = grain === 'x' ? [x, z] : [z, x]; }
+      else { const u = az >= ax ? x : z; [along, across] = grain === 'y' ? [y, u] : [u, y]; }
+      uv.setXY(i, across/A, along/L);
+    }
+    uv.needsUpdate = true;
+  }
+  const mesh = new THREE.Mesh(geo, lasissaMaterial(part, sel));
+  mesh.position.set(cx, cy, cz);
+  if(part.mat === 'glass') mesh.renderOrder = 4;
+  return mesh;
+}
+function disposeChildren(group){
+  for(const child of [...group.children]){ group.remove(child); child.traverse(o=>{ if(o.geometry) o.geometry.dispose(); }); }
+}
+// 戸本体の中身。開き戸：入れ物の +Z が吊り元から取っ手の側、+X が厚み（makeWalkDoorLeafMesh と同じ）。
+// 引戸：入れ物は戸の中心。sgn=+1 なら取っ手の側が壁沿いの + の向き（slideDir が L）
+function fillLasissaLeaf(entry, leaf){
+  disposeChildren(leaf.group);
+  const sel = lasissaSelection(entry.door.id, entry.operation);
+  const inner = new THREE.Group();
+  RyukaLasissa.leafParts(LASISSA, sel, leaf.w, leaf.h, entry.operation).forEach(p=>inner.add(lasissaPartMesh(p, sel)));
+  if(leaf.kind === 'swing') inner.rotation.y = -Math.PI/2;
+  else if(leaf.orientation === 'H'){ if(leaf.sgn > 0) inner.position.set(-leaf.w/2, -leaf.h/2, 0); else { inner.rotation.y = Math.PI; inner.position.set(leaf.w/2, -leaf.h/2, 0); } }
+  else { if(leaf.sgn > 0){ inner.rotation.y = -Math.PI/2; inner.position.set(0, -leaf.h/2, -leaf.w/2); } else { inner.rotation.y = Math.PI/2; inner.position.set(0, -leaf.h/2, leaf.w/2); } }
+  leaf.group.add(inner);
+}
+// 枠（戸と同じ色）：両わきの縦枠と上枠。壁の開口の小口を覆い、壁の両面へ少し出る
+function fillLasissaFrame(entry){
+  const {door: d, frame} = entry;
+  disposeChildren(frame);
+  const sel = lasissaSelection(d.id, entry.operation), fw = LASISSA_FRAME_W, half = INTERIOR_WALL_T/2 + .008;
+  const a0 = d.center - d.width/2, a1 = d.center + d.width/2, h = d.height;
+  const pieces = [[a0 - fw, a0 + .004, 0, h + fw, 'y'], [a1 - .004, a1 + fw, 0, h + fw, 'y'], [a0 - fw, a1 + fw, h - .004, h + fw, 'x']];
+  for(const [u0, u1, y0, y1, grain] of pieces){
+    const part = {box: [u0, u1, y0, y1, -half, half], mat: 'door', grain};
+    const mesh = lasissaPartMesh(part, sel);
+    // 部品の座標（壁沿い u、高さ y、壁に直交 n）→ 場面の座標
+    const u = mesh.position.x, y = mesh.position.y;
+    if(d.orientation === 'H'){ const [sx, sz] = toScene(u, d.wallAt); mesh.position.set(sx, y, sz); }
+    else { const [sx, sz] = toScene(d.wallAt, u); mesh.position.set(sx, y, sz); mesh.rotation.y = Math.PI/2; }
+    frame.add(mesh);
+  }
+}
+function lasissaKey(entry){ return JSON.stringify(lasissaSelection(entry.door.id, entry.operation)); }
+// 案が変わったとき（web/finishes.js の commit）：選択が変わった戸だけ作り直す
+function refreshLasissaDoors(){
+  lasissaDoors.forEach(entry=>{
+    const key = lasissaKey(entry);
+    if(key === entry.key) return;
+    entry.key = key;
+    entry.leaves.forEach(leaf=>fillLasissaLeaf(entry, leaf));
+    fillLasissaFrame(entry);
+  });
+}
+function lasissaEntry(door, operation){
+  if(!lasissaDoors.has(door.id)){
+    const frame = new THREE.Group();
+    frame.position.y = door.floor === 1 ? LEVELS.fl1 : LEVELS.fl2;
+    walkGroup.add(frame);
+    lasissaDoors.set(door.id, {door, operation, leaves: [], frame, key: null});
+  }
+  return lasissaDoors.get(door.id);
+}
 function makeWalkDoorLeafMesh(width, height, thick){
   const geo = new THREE.BoxGeometry(thick, height, width);
   const mesh = new THREE.Mesh(geo, walkDoorMat);
@@ -3527,8 +3700,10 @@ function makeWalkDoorLeafMesh(width, height, thick){
 // 開き戸・折れ戸1枚ぶんの扉本体を作る（回転して開閉する）。hingeAt=蝶番の位置(沿い方向の座標)、
 // alongSign=蝶番から扉が閉位置で伸びる向き、openSign=開いた状態で扉が伸びる向き（addDoorLeaf/
 // drawSwingLeafと同じ規約）
-function addWalkSwingLeaf(orientation, hingeAt, alongSign, wallCoord, baseY, height, w, thick, openSign, level, anchorX, anchorZ){
-  const group = makeWalkDoorLeafMesh(w, height, thick);
+function addWalkSwingLeaf(orientation, hingeAt, alongSign, wallCoord, baseY, height, w, thick, openSign, level, anchorX, anchorZ, lasissa){
+  let group;
+  if(lasissa){ group = new THREE.Group(); lasissa.leaves.push({group, kind: 'swing', w, h: height}); }
+  else group = makeWalkDoorLeafMesh(w, height, thick);
   const [sx,sz] = orientation==='H' ? toScene(hingeAt, wallCoord) : toScene(wallCoord, hingeAt);
   group.position.set(sx, baseY, sz);
   const closedDir = orientation==='H' ? [alongSign, 0] : [0, alongSign];
@@ -3579,16 +3754,17 @@ function addWalkFoldLeaf(orientation, hingeAt, alongSign, wallCoord, baseY, heig
   });
 }
 // 引き戸1枚の扉本体を作る（沿い方向にスライドして開閉する）
-function addWalkSlideLeaf(orientation, alongFrom, alongTo, wallCoord, baseY, height, thick, slideDir, level, anchorX, anchorZ, slideSide, travel){
+function addWalkSlideLeaf(orientation, alongFrom, alongTo, wallCoord, baseY, height, thick, slideDir, level, anchorX, anchorZ, slideSide, travel, lasissa){
   const w = alongTo - alongFrom;
   travel = travel ?? w;   // 開けたときに動く距離（片引き戸は戸の幅。2枚引戸は戸ごとに違う）
   const alongCenter = (alongFrom+alongTo)/2;
-  const geo = orientation==='H' ? new THREE.BoxGeometry(w, height, thick) : new THREE.BoxGeometry(thick, height, w);
-  const mesh = new THREE.Mesh(geo, walkDoorMat);
   const group = new THREE.Group();
-  group.add(mesh);
-  const edges = new THREE.LineSegments(new THREE.EdgesGeometry(geo), walkDoorEdgeMat);
-  group.add(edges);
+  if(lasissa) lasissa.leaves.push({group, kind: 'slide', w, h: height, orientation, sgn: slideDir === 'L' ? 1 : -1});
+  else {
+    const geo = orientation==='H' ? new THREE.BoxGeometry(w, height, thick) : new THREE.BoxGeometry(thick, height, w);
+    group.add(new THREE.Mesh(geo, walkDoorMat));
+    group.add(new THREE.LineSegments(new THREE.EdgesGeometry(geo), walkDoorEdgeMat));
+  }
   const c = wallCoord + slideSideOffset(slideSide);
   const [sx,sz] = orientation==='H' ? toScene(alongCenter, c) : toScene(c, alongCenter);
   group.position.set(sx, baseY+height/2, sz);
@@ -3600,14 +3776,14 @@ function addWalkSlideLeaf(orientation, alongFrom, alongTo, wallCoord, baseY, hei
   });
 }
 // addDoorLeaf()と同じoperation別の分岐で、内覧モード用の実体を追加する
-function addWalkDoorLeaves({ orientation, alongFrom, alongTo, wallCoord, baseY, height, operation, hingeSide, swingDir, slideDir, slideSide, outSign=1, level }){
+function addWalkDoorLeaves({ orientation, alongFrom, alongTo, wallCoord, baseY, height, operation, hingeSide, swingDir, slideDir, slideSide, outSign=1, level, lasissa }){
   if(!['swing','fold','double-swing','double-fold','slide','slide-2'].includes(operation)) return; // open系・窓は扉本体なし
   const w = alongTo - alongFrom;
   const thick = 0.04;
   const [anchorX, anchorZ] = orientation==='H' ? [(alongFrom+alongTo)/2, wallCoord] : [wallCoord, (alongFrom+alongTo)/2];
   if(operation==='slide'){
     if(!slideDir) return;
-    addWalkSlideLeaf(orientation, alongFrom, alongTo, wallCoord, baseY, height, thick, slideDir, level, anchorX, anchorZ, slideSide);
+    addWalkSlideLeaf(orientation, alongFrom, alongTo, wallCoord, baseY, height, thick, slideDir, level, anchorX, anchorZ, slideSide, undefined, lasissa);
     return;
   }
   if(operation==='slide-2'){
@@ -3645,17 +3821,20 @@ function addWalkDoorLeaves({ orientation, alongFrom, alongTo, wallCoord, baseY, 
     addWalkFoldLeaf(orientation, hingeAt, alongSign, wallCoord, baseY, height, w, thick, openSign, level, anchorX, anchorZ);
     return;
   }
-  addWalkSwingLeaf(orientation, hingeAt, alongSign, wallCoord, baseY, height, w, thick, openSign, level, anchorX, anchorZ);
+  addWalkSwingLeaf(orientation, hingeAt, alongSign, wallCoord, baseY, height, w, thick, openSign, level, anchorX, anchorZ, lasissa);
 }
 INTERIOR_DOORS.forEach(d=>{
   if(d.orientation==='D') return; // 斜め壁は対象外（wallAt/centerを持たないため）
   const eff = effectiveInteriorDoor(d);
+  // 室内ドア（ラシッサD）は部品で作る。浴室の戸・開口・折れ戸はこれまでどおり
+  const lasissa = RyukaLasissa.isLasissaDoor(LASISSA, eff, eff.operation) ? lasissaEntry(eff, eff.operation) : null;
   addWalkDoorLeaves({
     orientation: eff.orientation, alongFrom: eff.center-eff.width/2, alongTo: eff.center+eff.width/2, wallCoord: eff.wallAt,
     baseY: eff.floor===1 ? LEVELS.fl1 : LEVELS.fl2, height: eff.height, operation: eff.operation,
-    hingeSide: eff.hingeSide, swingDir: eff.swingDir, slideDir: eff.slideDir, slideSide: eff.slideSide, level: eff.floor,
+    hingeSide: eff.hingeSide, swingDir: eff.swingDir, slideDir: eff.slideDir, slideSide: eff.slideSide, level: eff.floor, lasissa,
   });
 });
+refreshLasissaDoors();
 OPENINGS.forEach(o=>{
   if(o.category!=='door') return;
   const eff = effectiveOpening(o);
@@ -3685,7 +3864,8 @@ function updateWalkDoors(dt){
     if(a.level !== walkLevel){ a.t = 0; } // 別の階にいる間は開閉演出を進めない（閉位置に戻す）
     else {
       const dist = Math.hypot(walkPos.x - a.anchorX, walkPos.z - a.anchorZ);
-      const target = dist < WALK_DOOR_OPEN_RADIUS ? 1 : 0;
+      // 室内ドアを選ぶ欄（web/doors.js）の「近づいても戸を開けない」：戸の面を閉じたまま見比べる
+      const target = (!window.walkDoorsHeldClosed && dist < WALK_DOOR_OPEN_RADIUS) ? 1 : 0;
       a.t += (target - a.t) * Math.min(1, dt * WALK_DOOR_ANIM_SPEED);
     }
     if(a.kind==='rotate'){

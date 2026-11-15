@@ -37,7 +37,11 @@ window.saveFinishesDraft = function(){
 };
 // 左パネルの「商品の色・サイズ」（interior-white-model.html）も、案の選択肢の変化に合わせて作り直す
 const refreshProductControlsNow = ()=>{ if(typeof refreshProductControls === 'function') refreshProductControls(); };
-function commit(){ saveFinishesDraft(); render(); refreshProducts(); refreshFurnitureColors(); refreshPanel(); refreshWalkHud(); refreshProductControlsNow(); }
+// 室内ドア（2026-11-15、LIXIL ラシッサD）：案の doors で内覧の戸本体を描き直す（interior-white-model.html の refreshLasissaDoors）
+const refreshDoorsNow = ()=>{ if(typeof refreshLasissaDoors === 'function') refreshLasissaDoors(); if(window.RyukaDoors) RyukaDoors.refresh(); };
+function commit(){ saveFinishesDraft(); render(); refreshProducts(); refreshFurnitureColors(); refreshPanel(); refreshWalkHud(); refreshProductControlsNow(); refreshDoorsNow(); }
+// 区分（home／guest）の表示中の案の室内ドアの選択（{all, perDoor}）
+window.lasissaDoorsFor = zone=>{ const s = doc.schemes.find(x=>x.id === (doc.activeSchemes || {})[zone]); return (s && s.doors) || {}; };
 
 // ---------- 採用品の選択肢（例：キッチンのIH背面）。案ごとに productOptions {家具id: {選択肢: 値}} ----------
 // 選択肢のある採用品（data/products/*.json の options）。家具の描画（web/products.js）はこの案の値で作る
@@ -601,10 +605,21 @@ refreshWalkHud();
 render();
 refreshProducts();   // 下書きの案の選択肢で採用品を描き直す（本体の初回描画は正本の案）
 refreshFurnitureColors();   // 本体の初回描画は標準の色なので、案の家具の色で描き直す
+setTimeout(refreshDoorsNow, 0);   // 室内ドアも下書きの案の選択で描き直す
 
 window.RyukaFinishes = {
   getDoc: ()=>clone(doc),
-  setDoc: next=>{ doc = clone(next); saveFinishesDraft(); render(); refreshProducts(); refreshFurnitureColors(); refreshPanel(); refreshWalkHud(); refreshProductControlsNow(); },
+  setDoc: next=>{ doc = clone(next); saveFinishesDraft(); render(); refreshProducts(); refreshFurnitureColors(); refreshPanel(); refreshWalkHud(); refreshProductControlsNow(); refreshDoorsNow(); },
+  // 室内ドア（web/doors.js の左メニューの欄から）。zone の表示中の案の doors を書き換える（空になれば消す）
+  setDoors: (zone, doors)=>{
+    const s = schemeOfZone(zone);
+    const clean = {};
+    if(doors.all && Object.keys(doors.all).length) clean.all = doors.all;
+    if(doors.perDoor && Object.keys(doors.perDoor).length) clean.perDoor = doors.perDoor;
+    if(Object.keys(clean).length) s.doors = clean; else delete s.doors;
+    commit();
+  },
+  schemeName: zone=>schemeOfZone(zone).name,
   setProductOption,   // 左パネル「商品の色・サイズ」（閲覧版のスマホ含む）から、キッチン・カップボードの扉カラーなどを選ぶ
   sourceDoc: ()=>clone(SOURCE),
   changeCount: ()=>finishesChangeCount(SOURCE, doc),
