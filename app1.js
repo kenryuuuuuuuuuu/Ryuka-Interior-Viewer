@@ -1338,8 +1338,8 @@ function ceilingPipeParts(w,d,h,options){
 const OPEN_SHELF_T=.025, OPEN_TOP_SPACE=.30, OPEN_PIPE_FROM_WALL=.30, OPEN_POST_GAP=.9;
 function openClosetSettings(w,d,h,options){
   options=options??{};
-  if(typeof options!=='object' || Array.isArray(options) || Object.keys(options).some(k=>!['rails','floorBoxes','contents'].includes(k)))
-    throw Error('壁付けハンガーの storage は rails・floorBoxes・contents だけ書けます');
+  if(typeof options!=='object' || Array.isArray(options) || Object.keys(options).some(k=>!['rails','floorBoxes','contents','hardware'].includes(k)))
+    throw Error('壁付けハンガーの storage は rails・floorBoxes・contents・hardware だけ書けます');
   const r3=v=>Math.round(v*1000)/1000, shelfTop=Math.round((h-OPEN_TOP_SPACE)*1e6)/1e6;
   const rails=options.rails ?? [[r3(shelfTop-.10),r3(-w/2+.05),r3(w/2-.05)]];
   if(!Array.isArray(rails) || rails.some(r=>!Array.isArray(r) || r.length!==3 || !r.every(Number.isFinite)))
@@ -1355,7 +1355,10 @@ function openClosetSettings(w,d,h,options){
   if(boxes.length && d<.42) throw Error('床の箱（奥行き0.40m）は奥行き0.42m以上の壁付けハンガーだけに置けます');
   const contents=options.contents ?? true;
   if(typeof contents!=='boolean') throw Error('収納物表示は真偽値で指定してください');
-  return {rails,floorBoxes:boxes,contents,shelfTop};
+  // hardware：'black'で棚柱・ブラケット・パイプを黒に（2026-11-15 子供部屋。既定は銀色）
+  const hardware=options.hardware ?? 'metal';
+  if(!['metal','black'].includes(hardware)) throw Error('壁付けハンガーの hardware は metal（銀色）か black（黒）です');
+  return {rails,floorBoxes:boxes,contents,shelfTop,hardware};
 }
 function openClosetParts(w,d,h,options){
   const cfg=openClosetSettings(w,d,h,options),parts=[];
@@ -1365,20 +1368,20 @@ function openClosetParts(w,d,h,options){
     box(prefix+'-lid',x-bw/2,x+bw/2,z-bd/2,z+bd/2,bottom+bh-.012,bottom+bh,'cabinet');
     box(prefix+'-label',x-bw*.18,x+bw*.18,z+bd/2,z+bd/2+.001,bottom+bh*.5,bottom+bh*.7,'metal');
   };
-  const back=-d/2, top=cfg.shelfTop, t=OPEN_SHELF_T, rails=cfg.rails;
+  const back=-d/2, top=cfg.shelfTop, t=OPEN_SHELF_T, rails=cfg.rails, iron=cfg.hardware;
   const n=Math.max(2,Math.ceil((w-.1)/OPEN_POST_GAP-1e-9)+1);
   const posts=Array.from({length:n},(_,k)=>-w/2+.05+k*(w-.1)/(n-1));
   const postY0=rails.length ? Math.max(0,Math.min(...rails.map(r=>r[0]))-.10) : Math.max(0,top-t-.30);
   posts.forEach((x,k)=>{
-    box(`post-${k}`,x-.0125,x+.0125,back,back+.012,postY0,top-t,'metal');
-    box(`bracket-${k}`,x-.006,x+.006,back+.012,d/2-.03,top-t-.03,top-t,'metal');
+    box(`post-${k}`,x-.0125,x+.0125,back,back+.012,postY0,top-t,iron);
+    box(`bracket-${k}`,x-.006,x+.006,back+.012,d/2-.03,top-t-.03,top-t,iron);
   });
   box('shelf',-w/2,w/2,back,d/2,top-t,top,'wood');
   const pz=back+OPEN_PIPE_FROM_WALL;
   rails.forEach(([y,x0,x1],j)=>{
-    box(`pipe-${j}`,x0,x1,pz-.014,pz+.014,y-.014,y+.014,'metal','cylinderX');
+    box(`pipe-${j}`,x0,x1,pz-.014,pz+.014,y-.014,y+.014,iron,'cylinderX');
     const holders=[x0+.03,...posts.filter(x=>x0+.06<x && x<x1-.06),x1-.03];
-    holders.forEach((x,k)=>box(`pipe-${j}-holder-${k}`,x-.006,x+.006,back+.012,pz-.014,y-.006,y+.006,'metal'));
+    holders.forEach((x,k)=>box(`pipe-${j}-holder-${k}`,x-.006,x+.006,back+.012,pz-.014,y-.006,y+.006,iron));
     if(cfg.contents){
       const count=Math.floor((x1-x0-.08)/.14+1e-9)+1;
       for(let k=0;k<count;k++){
@@ -2016,6 +2019,24 @@ function drawWq19(g,w,d,h,finish){
 }
 // 閉じたウェーブのカーテンの平面の輪郭（布の奥の線を+xから-xへ、手前の線を戻る）。blender/furniture_assets.py の curtain_wave() と同じ
 const CURTAIN_PITCH=.12, CURTAIN_WAVE=.035, CURTAIN_CLOTH=.008;
+// 開いたカーテンを束ねた幅（閉じたときの幅に対する割合）と、束ねたときに厚みが増える分。見た目の演出で、通行には関係しない。
+// blender/furniture_assets.py の CURTAIN_OPEN_WIDTH_RATIO・CURTAIN_OPEN_DEPTH_RATIO と同じ値
+const CURTAIN_OPEN_WIDTH_RATIO = 0.22;
+const CURTAIN_OPEN_DEPTH_RATIO = 1.45;
+// 品物の storage.open（0＝閉じた、1＝寄せた。2026-11-15 子供部屋）。blender/furniture_assets.py の curtain_open と同じ検査
+function curtainOpen(storage){
+  const o = storage || {};
+  if(typeof o!=='object' || Object.keys(o).some(k=>k!=='open')) throw Error('カーテンの storage は open だけ書けます');
+  const t = o.open===undefined ? 0 : o.open;
+  if(typeof t!=='number' || !Number.isFinite(t) || t<0 || t>1) throw Error('カーテンの open は0（閉じた）〜1（寄せた）です');
+  return t;
+}
+function setCurtainOpenness(holder, t){
+  const cloth = holder.userData.curtainCloth, w = holder.userData.curtainWidth;
+  const sx = 1 + (CURTAIN_OPEN_WIDTH_RATIO - 1) * t;
+  cloth.scale.set(sx, 1, 1 + (CURTAIN_OPEN_DEPTH_RATIO - 1) * t);
+  cloth.position.x = (w/2) * (1 - sx); // +x側の端を固定して、そこへ布を寄せる
+}
 // 低い本棚とフェイクの木の部品。blender/furniture_assets.py の bookshelf_parts()／plant_tree_parts() と同じ（[名前,[x0,x1,z0,z1,y0,y1],材質,円柱か]）
 function bookshelfParts(w,d,h){
   const t=.02,base=.06,two=h<.75,tier=two?(h-2*t-base)/2:(h-t-base-2*t)/3,y1=base+tier,y2=y1+t+tier,bay=w/2-t-t/2;
@@ -2252,7 +2273,8 @@ const FURNITURE_SHAPES = {
     fPart(group,w,h,.02,0,0,d/2-.01,FMAT.white);        // 中の照明を隠す前の板
   },
   // 天井のレールと、閉じたウェーブのカーテン（床から1cm上まで）。blender/furniture_assets.py の curtain_parts() と同じ形
-  curtain(group,w,d,h){
+  curtain(group,w,d,h,storage){
+    const open=curtainOpen(storage);
     fPart(group,w,.025,.03,0,h-.025,0,FMAT.white);
     const shape=new THREE.Shape();
     curtainWave(w).forEach(([x,z],i)=>i?shape.lineTo(x,-z):shape.moveTo(x,-z));shape.closePath();
@@ -2261,7 +2283,9 @@ const FURNITURE_SHAPES = {
     const cloth=new THREE.Mesh(geo,FMAT.curtain);
     group.add(cloth);
     // 内覧モードで近づくと開く（updateWalkCurtains）。布を+x側（回転0のとき東、収納の南の端）へ寄せて束ねる
-    group.userData.curtainCloth=cloth; group.userData.curtainWidth=w;
+    // storage.open（2026-11-15 子供部屋）：ふだんの開き具合。0＝閉じた、1＝寄せた。離れるとこの開き具合へ戻る
+    group.userData.curtainCloth=cloth; group.userData.curtainWidth=w; group.userData.curtainBase=open;
+    if(open) setCurtainOpenness(group,open);
   },
   // 壁掛けの絵：淡いキャンバス、縁の細い額（色を決めるまで地と同じ）、くすんだ色の面と小さな差し色
   wallArt(group,w,d,h){ addParts(group,wallArtParts(w,d,h)); },
@@ -2498,7 +2522,10 @@ function placeFurnitureItem(item){
   labels.push(l);
   furnitureMeshes.set(item.id, { holder, label: l, baseY });
   // 開閉するカーテン：近づいたかの判定に使う位置と階、開き具合(t: 0=閉,1=開)
-  if(holder.userData.curtainCloth) holder.userData.curtain = { x:item.x, z:item.z, level:item.level, t:0 };
+  if(holder.userData.curtainCloth){
+    const base = holder.userData.curtainBase || 0;
+    holder.userData.curtain = { x:item.x, z:item.z, level:item.level, t:base, base };
+  }
   // 窓や開口を覆う布・スクリーンは壁の一部のように視界をふさぐので、三人称では壁と一緒に透かす
   if(['rollScreen','pleatedScreen','curtain'].includes(profile.shape)) holder.userData.fadeWithWalls = true;
 }
@@ -3674,21 +3701,13 @@ function updateWalkDoors(dt){
   });
   updateWalkCurtains(dt);
 }
-// 収納のカーテン：ドアと同じ距離まで近づくと布が束ねられて開き、離れると閉じる。
-// 束ねた幅（閉じたときの幅に対する割合）と、束ねたときに厚みが増える分。見た目の演出で、通行には関係しない
-const CURTAIN_OPEN_WIDTH_RATIO = 0.22;
-const CURTAIN_OPEN_DEPTH_RATIO = 1.45;
-function setCurtainOpenness(holder, t){
-  const cloth = holder.userData.curtainCloth, w = holder.userData.curtainWidth;
-  const sx = 1 + (CURTAIN_OPEN_WIDTH_RATIO - 1) * t;
-  cloth.scale.set(sx, 1, 1 + (CURTAIN_OPEN_DEPTH_RATIO - 1) * t);
-  cloth.position.x = (w/2) * (1 - sx); // +x側の端を固定して、そこへ布を寄せる
-}
+// 収納のカーテン：ドアと同じ距離まで近づくと布が束ねられて開き、離れるとふだんの開き具合（storage.open）へ戻る。
+// 束ねる幅・開き具合の検査・布の寄せ方は、カーテンの形（curtainWave の近く）で定義している
 function updateWalkCurtains(dt){
   furnitureMeshes.forEach(({holder})=>{
     const c = holder.userData.curtain;
     if(!c) return;
-    const target = (c.level===walkLevel && Math.hypot(walkPos.x - c.x, walkPos.z - c.z) < WALK_DOOR_OPEN_RADIUS) ? 1 : 0;
+    const target = (c.level===walkLevel && Math.hypot(walkPos.x - c.x, walkPos.z - c.z) < WALK_DOOR_OPEN_RADIUS) ? 1 : (c.base || 0);
     let next = c.t + (target - c.t) * Math.min(1, dt * WALK_DOOR_ANIM_SPEED);
     if(Math.abs(next - target) < 1e-3) next = target;
     if(next !== c.t){ c.t = next; setCurtainOpenness(holder, next); }
@@ -3697,7 +3716,8 @@ function updateWalkCurtains(dt){
 function resetWalkCurtains(){
   furnitureMeshes.forEach(({holder})=>{
     const c = holder.userData.curtain;
-    if(c && c.t!==0){ c.t = 0; setCurtainOpenness(holder, 0); }
+    const base = c ? (c.base || 0) : 0;
+    if(c && c.t!==base){ c.t = base; setCurtainOpenness(holder, base); }
   });
 }
 
