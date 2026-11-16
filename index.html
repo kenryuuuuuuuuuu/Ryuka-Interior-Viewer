@@ -425,6 +425,9 @@ body{background:#dfe3e7}
 #vwBadge{display:inline-flex;align-items:center;gap:4px;background:rgba(255,255,255,.94);border-radius:11px;
   padding:8px 12px;font-size:12px;font-weight:600;color:#4a5158;box-shadow:0 3px 12px rgba(0,0,0,.18);white-space:nowrap}
 #vwBadge small{font-weight:500;color:#6b7480}
+#vwAlbum{display:inline-flex;align-items:center;background:rgba(255,255,255,.94);border-radius:11px;padding:8px 12px;font-size:12px;
+  font-weight:600;color:#3d5a3a;text-decoration:none;box-shadow:0 3px 12px rgba(0,0,0,.18);white-space:nowrap;margin-left:6px}
+#vwAlbum:hover{background:#fff;color:#2b4a2a}
 #vwSection{display:flex;flex-direction:column;gap:6px;margin-bottom:6px}
 #vwSection select{width:100%;border:1.5px solid #e4e7ea;border-radius:8px;padding:7px 8px;font-size:13px;background:#fff;color:#222b32}
 #vwSection .vw-zone{font-size:11.5px;font-weight:600;color:#4a5158;margin:2px 0 -3px}
@@ -439,7 +442,7 @@ body{background:#dfe3e7}
 @media (max-width:640px){
   #walkHud .room,#walkSwitchSpawn,#walkSchemeSelect,#walkSchemeZone,#walkRollToggle{display:none!important}
   #walkHud{padding:6px 8px}
-  body.vw-walk #vwBadge{display:none}
+  body.vw-walk #vwBadge,body.vw-walk #vwAlbum{display:none}
   /* ロールスクリーンの上げ下げは、スクリーンのある部屋に入ったときだけ（web/viewer.js）。ジョイスティックの上、ミニマップの左 */
   #vwRoll{position:fixed;left:50%;transform:translateX(-50%);bottom:calc(var(--safe-b) + 140px);z-index:22;
     background:rgba(20,26,32,.72);color:#fff;border:none;border-radius:10px;padding:9px 14px;font-size:12px;

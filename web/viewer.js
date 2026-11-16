@@ -5,6 +5,8 @@
 // - 左のメニューに、仕上げの案の切り替え（自宅の案・民泊の案を別々に）・仕様一覧・部屋を選んで内覧、を足す
 //   （ショールームでスマホから見る用途）。
 // - web/finishes.js が使う確認窓（RyukaLocalApp.dialog）の代わりを用意する（閲覧版では仕様一覧だけが使う）。
+// - 完成イメージ写真集（album/。scripts/build_album.py）があれば、上部に「📷 完成イメージ」を出す。
+//   写真集の「3Dで見る」は index.html#walk=階,x,z,向き で来るので、その位置・向きで内覧を始める。
 (function(){
 'use strict';
 const info = window.RYUKA_VIEWER || {};
@@ -39,6 +41,26 @@ window.RyukaLocalApp = {dialog};
 const topBar = document.getElementById('topBar');
 if(topBar) topBar.appendChild(el('span', {id: 'vwBadge', title: '編集・保存はPCの編集画面で行います'},
   '👀 閲覧専用', info.builtAt ? el('small', null, ` ${info.builtAt}`) : null));
+// 完成イメージ写真集へ（AIで生成した写真。写真集の側に「3Dに戻る」「3Dで見る」がある）
+if(topBar && info.album) topBar.appendChild(el('a', {id: 'vwAlbum', href: 'album/index.html', title: '完成イメージ写真集（3Dモデルから画像生成AIで作った写真）',
+  'aria-label': '完成イメージ写真集'}, '📷', el('span', null, ' 完成イメージ')));
+
+// 写真集の「3Dで見る」：#walk=階,x,z,向き（向きは本体の内覧と同じ。前＝(sin, cos)）
+function walkFromHash(){
+  const m = /^#walk=([12]),(-?[\d.]+),(-?[\d.]+),(-?[\d.]+)$/.exec(location.hash);
+  if(!m || typeof enterWalkMode !== 'function') return;
+  const [level, x, z, yaw] = [Number(m[1]), Number(m[2]), Number(m[3]), Number(m[4])];
+  let label = '完成イメージの場所';
+  try{
+    const room = (ROOMS_APPROX[level] || []).find(r=>r.id && pointInPolygon(x, z, roomPolygonPoints(r)));
+    if(room) label = room.name;
+  }catch(e){}
+  if(typeof mode !== 'undefined' && mode === 'walk' && typeof exitWalkMode === 'function'){ exitWalkMode(); }
+  enterWalkMode({level, x, z, yaw, label});
+  history.replaceState(null, '', location.pathname + location.search);   // 読み込み直しで同じ場所に戻されないように
+}
+window.addEventListener('load', ()=>setTimeout(walkFromHash, 0));
+window.addEventListener('hashchange', walkFromHash);
 
 // 左のメニュー：見るための操作をまとめる
 const ui = document.getElementById('ui');
